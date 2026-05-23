@@ -10,6 +10,7 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
+import { randomBytes } from 'crypto';
 import { SecurityError } from './limits.js';
 
 /**
@@ -300,7 +301,8 @@ export class TempFileManager {
   async createTempFile(prefix: string = 'agentdb'): Promise<string> {
     await this.init();
 
-    const filename = `${prefix}-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    // Use cryptographically secure random bytes to prevent temp-file prediction attacks
+    const filename = `${prefix}-${Date.now()}-${randomBytes(8).toString('hex')}`;
     const tempPath = path.join(this.tempDir, filename);
 
     this.tempFiles.add(tempPath);

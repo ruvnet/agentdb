@@ -22,6 +22,7 @@ import {
   buildSafeWhereClause,
   buildSafeSetClause,
   ValidationError,
+  validateSqlIdentifier,
 } from '../security/input-validation.js';
 
 export interface BatchConfig {
@@ -738,7 +739,9 @@ export class BatchOperations {
       .all() as any[];
 
     for (const { name } of tables) {
-      this.db.exec(`REINDEX ${name}`);
+      // Validate table name against safe identifier pattern before interpolation
+      const safeName = validateSqlIdentifier(name);
+      this.db.exec(`REINDEX ${safeName}`);
     }
 
     // Vacuum to reclaim space

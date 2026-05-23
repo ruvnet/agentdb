@@ -81,7 +81,12 @@ export const learnCommand = new Command('learn')
 
       // Load training data
       const dataContent = await fs.readFile(options.data, 'utf-8');
-      const trainingData = JSON.parse(dataContent);
+      let trainingData: unknown;
+      try {
+        trainingData = JSON.parse(dataContent);
+      } catch (err) {
+        throw new Error(`Training data file must contain valid JSON: ${err instanceof Error ? err.message : String(err)}`);
+      }
 
       if (!Array.isArray(trainingData) || trainingData.length === 0) {
         throw new Error('Training data must be a non-empty array');

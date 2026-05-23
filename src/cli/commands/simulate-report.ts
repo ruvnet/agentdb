@@ -45,7 +45,11 @@ async function loadReport(reportId: string): Promise<SimulationReport> {
     content = await fs.readFile(`${reportPath}.json`, 'utf-8');
   }
 
-  return JSON.parse(content);
+  try {
+    return JSON.parse(content);
+  } catch (err) {
+    throw new Error(`Failed to parse report file as JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 async function listReports(): Promise<void> {
@@ -65,7 +69,13 @@ async function listReports(): Promise<void> {
 
       const filePath = path.join(reportsDir, file);
       const content = await fs.readFile(filePath, 'utf-8');
-      const report: SimulationReport = JSON.parse(content);
+      let report: SimulationReport;
+      try {
+        report = JSON.parse(content);
+      } catch {
+        // Skip malformed report files
+        continue;
+      }
 
       reports.push({
         id: file.replace('.json', ''),

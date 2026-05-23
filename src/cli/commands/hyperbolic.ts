@@ -292,7 +292,12 @@ async function hyperbolicCentroid(options: HyperbolicOptions, curvature: number)
   }
 
   const fileContent = await fs.readFile(options.points, 'utf-8');
-  const points: number[][] = JSON.parse(fileContent);
+  let points: number[][];
+  try {
+    points = JSON.parse(fileContent);
+  } catch (err) {
+    throw new Error(`Failed to parse points file as JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   if (!Array.isArray(points) || points.length === 0) {
     throw new Error('Points must be a non-empty array');
@@ -354,7 +359,12 @@ async function dualSpaceSearch(options: HyperbolicOptions, curvature: number): P
   const topK = parseInt(String(options.topK || '10'));
 
   const fileContent = await fs.readFile(options.points, 'utf-8');
-  const points: number[][] = JSON.parse(fileContent);
+  let points: number[][];
+  try {
+    points = JSON.parse(fileContent);
+  } catch (err) {
+    throw new Error(`Failed to parse points file as JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // Compute dual-space similarities
   const results = points.map((point, idx) => {

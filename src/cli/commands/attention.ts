@@ -188,12 +188,20 @@ function createComputeCommand(): Command {
 
         if (options.keysFile) {
           const keysData = await fs.readFile(options.keysFile, 'utf-8');
-          keys = JSON.parse(keysData);
+          try {
+            keys = JSON.parse(keysData);
+          } catch (err) {
+            throw new Error(`Keys file must contain valid JSON: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
 
         if (options.valuesFile) {
           const valuesData = await fs.readFile(options.valuesFile, 'utf-8');
-          values = JSON.parse(valuesData);
+          try {
+            values = JSON.parse(valuesData);
+          } catch (err) {
+            throw new Error(`Values file must contain valid JSON: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
 
         // Compute attention based on mechanism

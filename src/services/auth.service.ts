@@ -25,6 +25,7 @@ import {
   hashApiKey,
   verifyApiKey,
   generateSessionId,
+  generateSecureRandomHex,
 } from '../utils/crypto.utils.js';
 import {
   createTokenPair,
@@ -182,7 +183,8 @@ export async function registerUser(
 
     // Create user
     const now = new Date();
-    const userId = `user_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    // Use cryptographically secure random bytes for user ID to prevent enumeration
+    const userId = `user_${Date.now()}_${generateSecureRandomHex(8)}`;
 
     const user: User = {
       id: userId,
@@ -399,7 +401,8 @@ export async function createUserApiKey(
 
   // Create API key record
   const now = new Date();
-  const apiKeyId = `key_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+  // Use cryptographically secure random bytes for API key record ID
+  const apiKeyId = `key_${Date.now()}_${generateSecureRandomHex(8)}`;
 
   const expiresAt = expiresInDays
     ? new Date(now.getTime() + expiresInDays * 24 * 60 * 60 * 1000)

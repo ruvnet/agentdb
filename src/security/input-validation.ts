@@ -252,6 +252,42 @@ export function validateEnum<T extends string>(
 }
 
 /**
+ * Validate a bare SQL identifier (table/index name) using a strict allowlist pattern.
+ *
+ * Use this when the identifier comes from sqlite_master or another internal source
+ * that cannot be parameterized (e.g. REINDEX <name>). The regex rejects anything
+ * that is not a plain alphanumeric-plus-underscore name, preventing SQL injection
+ * via a poisoned .rvf file or malicious DB image.
+ */
+export function validateSqlIdentifier(name: string): string {
+  if (!name || typeof name !== 'string') {
+    throw new ValidationError('SQL identifier must be a non-empty string', 'INVALID_IDENTIFIER', 'identifier');
+  }
+
+  const trimmed = name.trim();
+
+  // Only allow names consisting of letters, digits, and underscores, starting with a letter
+  // or underscore (same set accepted by SQLite for unquoted identifiers).
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) {
+    throw new ValidationError(
+      `SQL identifier contains invalid characters: ${trimmed}`,
+      'INVALID_IDENTIFIER',
+      'identifier'
+    );
+  }
+
+  if (trimmed.length > 128) {
+    throw new ValidationError(
+      'SQL identifier exceeds maximum length of 128 characters',
+      'INVALID_IDENTIFIER',
+      'identifier'
+    );
+  }
+
+  return trimmed;
+}
+
+/**
  * Validate table name against whitelist
  */
 export function validateTableName(tableName: string): string {

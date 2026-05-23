@@ -94,7 +94,11 @@ export const routeCommand = new Command('route')
       let history: any[] = [];
       if (options.history) {
         const historyContent = await fs.readFile(options.history, 'utf-8');
-        history = JSON.parse(historyContent);
+        try {
+          history = JSON.parse(historyContent);
+        } catch (err) {
+          throw new Error(`History file must contain valid JSON: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
 
       // Check for WASM availability
