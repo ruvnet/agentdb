@@ -18,6 +18,16 @@ import type { GraphDatabaseAdapter } from '../backends/graph/GraphDatabaseAdapte
 import { NodeIdMapper } from '../utils/NodeIdMapper.js';
 import { QueryCache, type QueryCacheConfig } from '../core/QueryCache.js';
 
+/** Parse JSON from DB row values without throwing on malformed data. */
+function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 export interface Episode {
   id?: number;
   ts?: number;
@@ -564,8 +574,8 @@ export class ReflexionMemory {
           : node.properties.success,
       latencyMs: node.properties.latencyMs,
       tokensUsed: node.properties.tokensUsed,
-      tags: node.properties.tags ? JSON.parse(node.properties.tags) : [],
-      metadata: node.properties.metadata ? JSON.parse(node.properties.metadata) : {},
+      tags: safeJsonParse(node.properties.tags, []),
+      metadata: safeJsonParse(node.properties.metadata, {}),
       ts: Math.floor(node.properties.createdAt / 1000),
     };
   }
@@ -590,8 +600,8 @@ export class ReflexionMemory {
       success: row.success === 1,
       latencyMs: row.latency_ms ?? undefined,
       tokensUsed: row.tokens_used ?? undefined,
-      tags: row.tags ? JSON.parse(row.tags) : undefined,
-      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+      tags: safeJsonParse(row.tags, undefined),
+      metadata: safeJsonParse(row.metadata, undefined),
       embedding,
       similarity,
     };
@@ -785,8 +795,8 @@ export class ReflexionMemory {
       success: row.success === 1,
       latencyMs: row.latency_ms ?? undefined,
       tokensUsed: row.tokens_used ?? undefined,
-      tags: row.tags ? JSON.parse(row.tags) : undefined,
-      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+      tags: safeJsonParse(row.tags, undefined),
+      metadata: safeJsonParse(row.metadata, undefined),
     }));
   }
 
@@ -1322,8 +1332,8 @@ export class ReflexionMemory {
         success: row.success === 1,
         latencyMs: row.latency_ms ?? undefined,
         tokensUsed: row.tokens_used ?? undefined,
-        tags: row.tags ? JSON.parse(row.tags) : undefined,
-        metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+        tags: safeJsonParse(row.tags, undefined),
+        metadata: safeJsonParse(row.metadata, undefined),
       };
 
       // Prefer the stored embedding; fall back to recomputing if missing.

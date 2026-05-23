@@ -23,6 +23,16 @@ import { normalizeRowId } from '../types/database.types.js';
 import { EmbeddingService } from './EmbeddingService.js';
 import type { VectorBackend, SearchResult } from '../backends/VectorBackend.js';
 
+/** Parse JSON from DB row values without throwing on malformed data. */
+function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 export interface ReasoningPattern {
   id?: number;
   taskType: string;
@@ -360,8 +370,8 @@ export class ReasoningBank {
         successRate: row.success_rate,
         uses: row.uses,
         avgReward: row.avg_reward,
-        tags: row.tags ? JSON.parse(row.tags) : [],
-        metadata: row.metadata ? JSON.parse(row.metadata) : {},
+        tags: safeJsonParse(row.tags, []),
+        metadata: safeJsonParse(row.metadata, {}),
         createdAt: row.ts,
         embedding,
         similarity,
@@ -405,8 +415,8 @@ export class ReasoningBank {
         successRate: row.success_rate,
         uses: row.uses,
         avgReward: row.avg_reward,
-        tags: row.tags ? JSON.parse(row.tags) : [],
-        metadata: row.metadata ? JSON.parse(row.metadata) : {},
+        tags: safeJsonParse(row.tags, []),
+        metadata: safeJsonParse(row.metadata, {}),
         createdAt: row.ts,
         similarity: result.similarity,
       };
@@ -618,8 +628,8 @@ export class ReasoningBank {
       successRate: row.success_rate,
       uses: row.uses,
       avgReward: row.avg_reward,
-      tags: row.tags ? JSON.parse(row.tags) : [],
-      metadata: row.metadata ? JSON.parse(row.metadata) : {},
+      tags: safeJsonParse(row.tags, []),
+      metadata: safeJsonParse(row.metadata, {}),
       createdAt: row.ts,
       embedding: row.embedding
         ? new Float32Array(

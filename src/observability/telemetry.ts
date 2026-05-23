@@ -135,8 +135,10 @@ export class TelemetryManager {
       });
 
       // Basic SDK initialization without complex exporters for now
+      // Cast resource to any to bridge the minor type incompatibility between
+      // @opentelemetry/resources versions pinned by different sub-packages.
       this.sdk = new NodeSDK({
-        resource,
+        resource: resource as any,
         instrumentations: [],
       }) as any;
 

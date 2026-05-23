@@ -16,6 +16,16 @@ import type { GraphDatabaseAdapter } from '../backends/graph/GraphDatabaseAdapte
 import { NodeIdMapper } from '../utils/NodeIdMapper.js';
 import { QueryCache, type QueryCacheConfig } from '../core/QueryCache.js';
 
+/** Parse JSON from DB row values without throwing on malformed data. */
+function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 export interface Skill {
   id?: number;
   name: string;
@@ -277,14 +287,14 @@ export class SkillLibrary {
           id: row.id,
           name: row.name,
           description: row.description ?? undefined,
-          signature: JSON.parse(row.signature),
+          signature: safeJsonParse(row.signature, undefined) as Skill["signature"],
           code: row.code ?? undefined,
           successRate: row.success_rate,
           uses: row.uses,
           avgReward: row.avg_reward,
           avgLatencyMs: row.avg_latency_ms,
           createdFromEpisode: row.created_from_episode ?? undefined,
-          metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+          metadata: safeJsonParse(row.metadata, undefined),
           similarity: result.similarity,
         });
       }
@@ -341,14 +351,14 @@ export class SkillLibrary {
         id: row.id,
         name: row.name,
         description: row.description ?? undefined,
-        signature: JSON.parse(row.signature),
+        signature: safeJsonParse(row.signature, undefined) as Skill["signature"],
         code: row.code ?? undefined,
         successRate: row.success_rate,
         uses: row.uses,
         avgReward: row.avg_reward,
         avgLatencyMs: row.avg_latency_ms,
         createdFromEpisode: row.created_from_episode ?? undefined,
-        metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+        metadata: safeJsonParse(row.metadata, undefined),
         similarity,
       });
     }
@@ -887,14 +897,14 @@ export class SkillLibrary {
       id: row.id,
       name: row.name,
       description: row.description,
-      signature: JSON.parse(row.signature),
+      signature: safeJsonParse(row.signature, undefined) as Skill["signature"],
       code: row.code,
       successRate: row.success_rate,
       uses: row.uses,
       avgReward: row.avg_reward,
       avgLatencyMs: row.avg_latency_ms,
       createdFromEpisode: row.created_from_episode,
-      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+      metadata: safeJsonParse(row.metadata, undefined),
     };
   }
 
