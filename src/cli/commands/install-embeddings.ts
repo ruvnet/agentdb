@@ -3,9 +3,7 @@
  * Install optional embedding dependencies (@xenova/transformers + onnxruntime)
  */
 
-import { execSync } from 'child_process';
-import * as fs from 'fs';
-import * as path from 'path';
+import { spawnSync } from 'child_process';
 
 // Color codes for beautiful output
 const colors = {
@@ -36,20 +34,26 @@ export async function installEmbeddingsCommand(options: InstallEmbeddingsOptions
       console.log(`${colors.blue}ℹ Installing @xenova/transformers...${colors.reset}`);
     }
 
-    // Determine npm command
-    const npmCmd = options.global ? 'npm install -g' : 'npm install';
+    // Determine npm args (avoid shell string interpolation — use array form)
+    const npmArgs = options.global
+      ? ['install', '-g', '@xenova/transformers']
+      : ['install', '@xenova/transformers'];
 
     console.log(`\n${colors.cyan}📦 Installing optional dependencies:${colors.reset}`);
     console.log(`   - @xenova/transformers (ML models)`);
     console.log(`   - onnxruntime-node (native inference)`);
     console.log('');
 
-    // Install dependencies
+    // Install dependencies using spawnSync with args array to prevent shell injection
     try {
-      execSync(`${npmCmd} @xenova/transformers`, {
+      const result = spawnSync('npm', npmArgs, {
         stdio: 'inherit',
-        cwd: process.cwd()
+        cwd: process.cwd(),
+        shell: false
       });
+      if (result.status !== 0) {
+        throw new Error(`npm exited with code ${result.status ?? 'unknown'}`);
+      }
 
       console.log(`\n${colors.green}✅ Embedding dependencies installed successfully${colors.reset}\n`);
 

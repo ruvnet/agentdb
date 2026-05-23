@@ -191,7 +191,7 @@
   ],
   "optionalDependencies": {
     "@opentelemetry/resources": "^1.25.0",
-    "@opentelemetry/sdk-node": "^0.217.0",
+    "@opentelemetry/sdk-node": "^0.218.0",
     "@opentelemetry/semantic-conventions": "^1.25.0",
     "@ruvector/attention": "^0.1.2",
     "@ruvector/gnn": "^0.1.23",
@@ -217,6 +217,7 @@
   "overrides": {
     "@xenova/transformers": {
       "sharp": "^0.33.0"
-    }
+    },
+    "protobufjs": "^7.6.1"
   }
 }
