@@ -88,7 +88,7 @@ export class SelfLearningRvfBackend implements VectorBackendAsync {
   private activeTrajectories = new Map<string, ActiveTrajectory>();
   private trajectoryCounter = 0;
   private sampleBuffer: ContrastiveSample[] = [];
-  private recentSearches: Array<{ query: Float32Array; results: SearchResult[]; quality?: number }> = [];
+  private recentSearches: Array<{ query: Float32Array; results: SearchResult[]; quality?: number; key?: string }> = [];
   private accessFrequency = new Map<string, number>();
   private totalSearches = 0;
   private activeSessions = new Map<string, SessionHandle>();
@@ -159,6 +159,12 @@ export class SelfLearningRvfBackend implements VectorBackendAsync {
 
   async searchAsync(query: Float32Array, k: number, options?: SearchOptions): Promise<SearchResult[]> {
     this.ensureAlive();
+    if (options?.feedbackId !== undefined && this.activeTrajectories.has(options.feedbackId)) {
+      throw new Error(
+        `searchAsync: feedbackId "${options.feedbackId}" is already outstanding — ` +
+        `call recordFeedback() for it before reusing, or pick a unique id`,
+      );
+    }
     const start = performance.now();
     let enhanced = query, route: string | undefined, trajId: number | undefined, ef = options?.efSearch;
 
@@ -181,6 +187,18 @@ export class SelfLearningRvfBackend implements VectorBackendAsync {
           }).catch(() => { /* non-blocking */ });
         } catch { /* skip */ }
       }
+      // Fixes #14 (3/3): apply the trained contrastive projection to
+      // retrieval — previously trainBatch() updated `weights`/`bias` but
+      // nothing in the search path ever called trainer.project(), so
+      // trained weights had zero effect on ranking. Only apply once at
+      // least one batch has trained (an untrained projection is
+      // identity + small noise, which would just add noise to cold-start
+      // queries).
+      if (this.trainer) {
+        try {
+          if (this.trainer.getStats().totalBatches > 0) enhanced = this.trainer.project(enhanced);
+        } catch { /* skip */ }
+      }
     }
 
     const results = await this.backend.searchAsync(enhanced, k, ef ? { ...options, efSearch: ef } : options);
@@ -191,7 +209,6 @@ export class SelfLearningRvfBackend implements VectorBackendAsync {
       const qCopy = new Float32Array(query), rCopy = [...results]; // single copy, shared below
       for (const r of rCopy) this.accessFrequency.set(r.id, Math.min(1, (this.accessFrequency.get(r.id) ?? 0) + 0.01));
       if (this.recentSearches.length >= RECENT_CAP) this.recentSearches.shift();
-      this.recentSearches.push({ query: qCopy, results: rCopy });
 
       if (trajId !== undefined && this.sona && rCopy.length > 0) {
         try {
@@ -201,9 +218,23 @@ export class SelfLearningRvfBackend implements VectorBackendAsync {
         } catch { /* skip */ }
       }
       if (trajId !== undefined) {
-        const qid = `q_${this.trajectoryCounter++}`;
+        // Fixes #14 (1/3): searchAsync previously generated this key
+        // internally and never surfaced it, so recordFeedback() was
+        // unreachable except by guessing the internal "q_N" format. Use the
+        // caller-supplied feedbackId when given so recordFeedback() actually
+        // works; keep the internal counter as a fallback for callers that
+        // don't need feedback correlation (matches prior behavior).
+        const qid = options?.feedbackId ?? `q_${this.trajectoryCounter++}`;
         this.activeTrajectories.set(qid, { id: trajId, queryEmbedding: qCopy, results: rCopy, route, startedAt: Date.now() });
+        // Fixes #14 (2/3): tag the recentSearches entry with the same key so
+        // recordFeedback() can find and update its `quality` — previously
+        // `quality` was never written anywhere, so createSamples()'s search
+        // for low-quality negatives (`r.quality < negativeThreshold`) always
+        // matched zero entries and no contrastive sample was ever created.
+        this.recentSearches.push({ query: qCopy, results: rCopy, key: qid });
         if (this.activeTrajectories.size > 500) this.expireTrajectories();
+      } else {
+        this.recentSearches.push({ query: qCopy, results: rCopy });
       }
     }
     return results;
@@ -266,6 +297,18 @@ export class SelfLearningRvfBackend implements VectorBackendAsync {
     if (this.sona) try { this.sona.endTrajectory(traj.id, q); } catch { /* skip */ }
     this.activeTrajectories.delete(queryId);
     this._trajectoriesRecorded++;
+
+    // Fixes #14 (2/3): propagate the feedback quality onto the matching
+    // recentSearches entry (searched from most-recent, since a key can only
+    // be pushed once per outstanding trajectory) so createSamples() can find
+    // it later as a negative example when a *different* trajectory reports
+    // high-quality feedback.
+    for (let i = this.recentSearches.length - 1; i >= 0; i--) {
+      if (this.recentSearches[i].key === queryId) {
+        this.recentSearches[i].quality = q;
+        break;
+      }
+    }
 
     if (this.trainer && traj.results.length > 0) this.createSamples(traj, q);
     for (const h of this.activeSessions.values()) try { h.recordTrajectory(traj.queryEmbedding, q, traj.route); } catch { /* skip */ }

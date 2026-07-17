@@ -56,6 +56,17 @@ export interface SearchOptions {
 
   /** Metadata filters (post-filtering) */
   filter?: Record<string, unknown>;
+
+  /**
+   * Caller-owned opaque correlation key for later feedback (issue #14).
+   *
+   * Backends that support async feedback (e.g. `SelfLearningRvfBackend`)
+   * use this — instead of an internal id the caller has no way to obtain —
+   * to correlate a later `recordFeedback(feedbackId, quality)` call back to
+   * this search. Must be unique among currently-outstanding searches; reusing
+   * an id that hasn't been resolved via `recordFeedback` yet throws.
+   */
+  feedbackId?: string;
 }
 
 export interface VectorStats {

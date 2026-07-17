@@ -199,7 +199,7 @@
     "@ruvector/graph-node": "^2.0.2",
     "@ruvector/router": "^0.1.15",
     "@ruvector/ruvllm": "^2.5.1",
-    "@ruvector/rvf": "^0.1.9",
+    "@ruvector/rvf": "^0.2.3",
     "@ruvector/rvf-node": "^0.1.7",
     "@ruvector/rvf-solver": "^0.1.7",
     "@ruvector/rvf-wasm": "^0.1.6",
