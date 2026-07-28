@@ -946,7 +946,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Initialize schema
         initializeSchema(db);
 
-        const stats = db.prepare('SELECT COUNT(*) as count FROM sqlite_master WHERE type="table"').get() as any;
+        // Single-quoted string literal: double quotes are identifiers when
+        // SQLite is compiled with SQLITE_DQS=0 (recent better-sqlite3 builds).
+        const stats = db.prepare("SELECT COUNT(*) as count FROM sqlite_master WHERE type='table'").get() as any;
 
         return {
           content: [
