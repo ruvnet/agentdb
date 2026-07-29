@@ -40,6 +40,12 @@ import {
   euclideanDistanceSIMD,
   dotProductSIMD,
 } from '../../simd/simd-vector-ops.js';
+import {
+  captureDatabaseFileState,
+  loadSqlJsDatabaseFile,
+  persistSqlJsDatabase,
+  type DatabaseFileState,
+} from '../../db-fallback.js';
 
 /** Cached entry in the in-memory vector store */
 interface CacheEntry {
@@ -101,6 +107,7 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
   private metricType: 'cosine' | 'l2' | 'ip';
   private initialized = false;
   private storagePath: string;
+  private fileState: DatabaseFileState | null = null;
 
   // In-memory vector cache for brute-force search
   private cache: Map<string, CacheEntry> = new Map();
@@ -138,18 +145,11 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
     const initSqlJs = (await import('sql.js')).default;
     const SQL = await initSqlJs();
 
-    // Try to load existing file
-    let fileBuffer: Uint8Array | null = null;
-    if (this.storagePath !== ':memory:') {
-      try {
-        const fs = await import('fs');
-        if (fs.existsSync(this.storagePath)) {
-          fileBuffer = new Uint8Array(fs.readFileSync(this.storagePath));
-        }
-      } catch {
-        // File doesn't exist or can't be read — start fresh
-      }
-    }
+    const loaded = this.storagePath === ':memory:'
+      ? { data: null, state: null }
+      : loadSqlJsDatabaseFile(this.storagePath);
+    const fileBuffer = loaded.data;
+    this.fileState = loaded.state;
 
     this.db = fileBuffer ? new SQL.Database(fileBuffer) : new SQL.Database();
     this.createSchema();
@@ -225,52 +225,55 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
     if (targetPath === ':memory:') return;
     validatePath(targetPath);
     const data: Uint8Array = this.db.export();
-    const fs = await import('fs');
-    fs.writeFileSync(targetPath, data);
+    const expectedState = targetPath === this.storagePath
+      ? this.fileState!
+      : captureDatabaseFileState(targetPath);
+    const nextState = persistSqlJsDatabase(targetPath, data, expectedState);
+    if (targetPath === this.storagePath) this.fileState = nextState;
   }
 
   async load(loadPath: string): Promise<void> {
     validatePath(loadPath);
-    const fs = await import('fs');
-    const buffer = new Uint8Array(fs.readFileSync(loadPath));
+    const loaded = loadSqlJsDatabaseFile(loadPath);
+    if (!loaded.data) throw new Error(`Database file does not exist: ${loadPath}`);
     const initSqlJs = (await import('sql.js')).default;
     const SQL = await initSqlJs();
     if (this.db) {
       this._unregisterFromFinalization();
       this.db.close();
     }
-    this.db = new SQL.Database(buffer);
+    this.db = new SQL.Database(loaded.data);
     this.createSchema(); // ensure schema exists
     this.rebuildCache();
     this.storagePath = loadPath;
+    this.fileState = loaded.state;
     this.initialized = true;
     this._registerForFinalization();
   }
 
   close(): void {
+    let persistenceError: unknown;
     if (this.db) {
-      // Flush pending writes
-      this.flushSync();
-      // Auto-save if we have a file path
-      if (this.storagePath !== ':memory:') {
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const fs = require('fs');
+      try {
+        this.flushSync();
+        if (this.storagePath !== ':memory:') {
           const data: Uint8Array = this.db.export();
-          fs.writeFileSync(this.storagePath, data);
-        } catch {
-          // Best-effort save on close
+          this.fileState = persistSqlJsDatabase(this.storagePath, data, this.fileState!);
         }
+      } catch (error) {
+        persistenceError = error;
+      } finally {
+        // ruflo#2432 fix — unregister from FinalizationRegistry BEFORE close()
+        // so the finalizer doesn't double-close on later GC.
+        this._unregisterFromFinalization();
+        this.db.close();
+        this.db = null;
       }
-      // ruflo#2432 fix — unregister from FinalizationRegistry BEFORE close()
-      // so the finalizer doesn't double-close on later GC.
-      this._unregisterFromFinalization();
-      this.db.close();
-      this.db = null;
     }
     this.pending = [];
     this.cache.clear();
     this.initialized = false;
+    if (persistenceError) throw persistenceError;
   }
 
   // ─── MEMFS leak safety net (ruflo#2432) ───────────────────────────────────

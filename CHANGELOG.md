@@ -5,6 +5,28 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-alpha.19] - 2026-07-29
+
+### Fixed
+
+- Prevented sql.js fallback instances from silently overwriting database updates
+  made by another process. File-backed saves now use SHA-256 generation checks,
+  WAL/journal detection, a cooperative writer lock, atomic replacement, and
+  durable file/directory synchronization.
+- Applied the same fail-closed persistence contract to the built-in sql.js RVF
+  backend and surfaced concurrent-modification failures during shutdown.
+- Reserved MCP stdout for JSON-RPC messages; CLI, database, embedding, and
+  transitive controller diagnostics now remain on stderr.
+- Restored reproducible clean installs by pinning available ruvllm platform
+  packages and limited the release TypeScript build to publishable source.
+
+### Tested
+
+- Added concurrent writer, WAL/journal, corrupt-file, clean persistence, and
+  two-handle regression coverage.
+- Added a post-build MCP handshake/tool-call test that rejects any non-JSON
+  stdout.
+
 ## [2.0.0-alpha.2.16] - 2025-12-03
 
 ### Added

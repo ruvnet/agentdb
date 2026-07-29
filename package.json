@@ -1,6 +1,6 @@
 {
   "name": "agentdb",
-  "version": "3.0.0-alpha.18",
+  "version": "3.0.0-alpha.19",
   "description": "Self-learning vector memory for AI agents — single-file .rvf cognitive container with HNSW search, episodic Reflexion memory, causal graph + Cypher, 9 RL algorithms, Thompson Sampling bandit, 41 MCP tools, hybrid (BM25 + dense) retrieval, GNN attention. 150x faster than SQLite. Up to +36% search quality from feedback. Runs in Node, browsers (WASM), edge, offline. Backs the agentic-flow / ruflo / Claude Code memory layer.",
   "type": "module",
   "main": "dist/src/index.js",
@@ -65,7 +65,8 @@
     "test": "vitest",
     "test:unit": "vitest --run",
     "test:browser": "vitest browser-bundle-unit.test.js --run",
-    "test:ci": "npm run test:unit && npm run test:browser && npm run build && npm run verify:bundle",
+    "test:ci": "npm run test:unit && npm run test:browser && npm run build && npm run verify:bundle && npm run test:mcp-stdio",
+    "test:mcp-stdio": "node tests/mcp-stdio-purity.mjs",
     "verify:bundle": "node scripts/verify-bundle.js",
     "cli": "node dist/src/cli/agentdb-cli.js",
     "docker:test": "docker build -f docs/SQLITE-FIX-DOCKER-TEST.Dockerfile -t agentdb-test . && docker run --rm agentdb-test",
@@ -216,6 +217,11 @@
     "ruvector-graph-transformer-wasm": "^2.0.4"
   },
   "overrides": {
+    "@ruvector/ruvllm-darwin-arm64": "2.0.1",
+    "@ruvector/ruvllm-darwin-x64": "2.0.1",
+    "@ruvector/ruvllm-linux-arm64-gnu": "2.0.1",
+    "@ruvector/ruvllm-linux-x64-gnu": "2.0.1",
+    "@ruvector/ruvllm-win32-x64-msvc": "2.0.1",
     "@xenova/transformers": {
       "sharp": "^0.33.0"
     },

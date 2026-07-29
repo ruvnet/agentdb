@@ -29,12 +29,7 @@
     "types": ["node"]
   },
   "include": [
-    "src/**/*",
-    "simulation/**/*",
-    "simulation/scenarios/**/*",
-    "benchmarks/**/*",
-    "examples/**/*",
-    "tests/**/*"
+    "src/**/*"
   ],
   "exclude": [
     "node_modules",

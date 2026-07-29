@@ -46,6 +46,11 @@ import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// stdout belongs exclusively to JSON-RPC when running over stdio. Route every
+// transitive diagnostic (including legacy controller console.log calls) to
+// stderr before database and embedding initialization begins.
+console.log = (...args: unknown[]) => console.error(...args);
+
 // ============================================================================
 // Helper Functions for Core Vector DB Operations
 // ============================================================================
@@ -2422,6 +2427,8 @@ async function main() {
     clearInterval(keepAlive);
     clearInterval(autoSaveInterval);
 
+    let persistenceFailed = false;
+
     // Save database before exit
     try {
       if (db && typeof db.save === 'function') {
@@ -2430,20 +2437,24 @@ async function main() {
         console.error('✅ Database saved successfully');
       }
     } catch (error) {
+      persistenceFailed = true;
       console.error('❌ Error saving database:', (error as Error).message);
     }
 
-    // Close database connection
+    // Close database connection. close() persists sql.js itself, so only call
+    // it after save when save succeeded; a failed optimistic save must not be
+    // retried against the same stale snapshot.
     try {
-      if (db && typeof db.close === 'function') {
+      if (!persistenceFailed && db && typeof db.close === 'function') {
         db.close();
         console.error('✅ Database connection closed');
       }
     } catch (error) {
+      persistenceFailed = true;
       console.error('❌ Error closing database:', (error as Error).message);
     }
 
-    process.exit(0);
+    process.exit(persistenceFailed ? 1 : 0);
   };
 
   process.on('SIGINT', shutdown);

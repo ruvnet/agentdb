@@ -14,7 +14,9 @@ import {
 let nativeAvailable = false;
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  require.resolve('better-sqlite3');
+  const BetterSqlite3 = require('better-sqlite3');
+  const probe = new BetterSqlite3(':memory:');
+  probe.close();
   nativeAvailable = true;
 } catch {
   nativeAvailable = false;

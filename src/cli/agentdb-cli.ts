@@ -2099,7 +2099,7 @@ async function handleMcpCommand(args: string[]) {
   const subcommand = args[0];
 
   if (subcommand === 'start' || !subcommand) {
-    log.info('Starting AgentDB MCP Server...');
+    console.error('Starting AgentDB MCP Server...');
 
     // Spawn the MCP server as a child process (like agentic-flow does)
     // This ensures the server stays running with proper stdio inheritance

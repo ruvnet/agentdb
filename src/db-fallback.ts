@@ -16,6 +16,7 @@
  */
 
 import { validatePragmaCommand, ValidationError } from './security/input-validation.js';
+import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -25,6 +26,192 @@ type Database = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- cached impl (better-sqlite3 class or sql.js wrapper class)
 let cachedImpl: any = null;
 let cachedImplKind: 'better-sqlite3' | 'sql.js' | null = null;
+
+export interface FileFingerprint {
+  exists: boolean;
+  device?: number;
+  inode?: number;
+  mode?: number;
+  size?: number;
+  mtimeMs?: number;
+  ctimeMs?: number;
+  sha256?: string;
+}
+
+export interface DatabaseFileState {
+  database: FileFingerprint;
+  wal: FileFingerprint;
+  shm: FileFingerprint;
+  journal: FileFingerprint;
+}
+
+export class SqlJsConcurrentModificationError extends Error {
+  readonly code = 'AGENTDB_SQLJS_CONCURRENT_MODIFICATION';
+
+  constructor(filename: string) {
+    super(
+      `Refusing to overwrite "${filename}" because it changed after this sql.js instance opened. ` +
+      'Another process may have written to the database; reopen it before retrying.'
+    );
+    this.name = 'SqlJsConcurrentModificationError';
+  }
+}
+
+function fingerprintFile(filename: string): FileFingerprint {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(filename, 'r');
+    const before = fs.fstatSync(fd);
+    const data = fs.readFileSync(fd);
+    const after = fs.fstatSync(fd);
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      before.ctimeMs !== after.ctimeMs
+    ) {
+      throw new SqlJsConcurrentModificationError(filename);
+    }
+    return {
+      exists: true,
+      device: after.dev,
+      inode: after.ino,
+      mode: after.mode,
+      size: after.size,
+      mtimeMs: after.mtimeMs,
+      ctimeMs: after.ctimeMs,
+      sha256: createHash('sha256').update(data).digest('hex'),
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { exists: false };
+    throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+export function captureDatabaseFileState(filename: string): DatabaseFileState {
+  return {
+    database: fingerprintFile(filename),
+    wal: fingerprintFile(`${filename}-wal`),
+    shm: fingerprintFile(`${filename}-shm`),
+    journal: fingerprintFile(`${filename}-journal`),
+  };
+}
+
+export function loadSqlJsDatabaseFile(
+  filename: string
+): { data: Uint8Array | null; state: DatabaseFileState } {
+  const state = captureDatabaseFileState(filename);
+  if (
+    (state.wal.exists && state.wal.size! > 0) ||
+    (state.journal.exists && state.journal.size! > 0)
+  ) {
+    throw new Error(
+      `Refusing to open "${filename}" with sql.js while an active SQLite WAL or journal exists. ` +
+      'Checkpoint/close the other SQLite writer first.'
+    );
+  }
+  if (!state.database.exists) return { data: null, state };
+
+  // fingerprintFile hashes the exact bytes read from a stable descriptor.
+  // Read once more and verify the digest so the returned bytes and baseline
+  // are guaranteed to describe the same database generation.
+  const data = fs.readFileSync(filename);
+  const digest = createHash('sha256').update(data).digest('hex');
+  if (digest !== state.database.sha256) {
+    throw new SqlJsConcurrentModificationError(filename);
+  }
+  if (
+    data.length < 16 ||
+    data.subarray(0, 16).toString('utf8') !== 'SQLite format 3\u0000'
+  ) {
+    throw new Error(`Refusing to open invalid SQLite database file "${filename}"`);
+  }
+  return { data: new Uint8Array(data), state };
+}
+
+function sameDatabaseFileState(left: DatabaseFileState, right: DatabaseFileState): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function fsyncDirectory(directory: string): void {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(directory, 'r');
+    fs.fsyncSync(fd);
+  } catch (error) {
+    // Some platforms/filesystems do not permit opening or syncing directories.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'EINVAL' && code !== 'EPERM' && code !== 'EISDIR') throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+export function persistSqlJsDatabase(
+  filename: string,
+  data: Uint8Array,
+  expectedState: DatabaseFileState
+): DatabaseFileState {
+  const directory = path.dirname(filename);
+  fs.mkdirSync(directory, { recursive: true });
+  if (fs.existsSync(filename) && fs.lstatSync(filename).isSymbolicLink()) {
+    throw new Error(`Refusing to replace symbolic-link database path "${filename}"`);
+  }
+
+  const lockPath = `${filename}.agentdb.lock`;
+  let lockFd: number | undefined;
+  let tempPath: string | undefined;
+  try {
+    try {
+      lockFd = fs.openSync(lockPath, 'wx', 0o600);
+      fs.writeSync(lockFd, `${process.pid}\n`);
+      fs.fsyncSync(lockFd);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        throw new SqlJsConcurrentModificationError(filename);
+      }
+      throw error;
+    }
+
+    if (!sameDatabaseFileState(captureDatabaseFileState(filename), expectedState)) {
+      throw new SqlJsConcurrentModificationError(filename);
+    }
+
+    tempPath = path.join(directory, `.${path.basename(filename)}.${process.pid}.${randomUUID()}.tmp`);
+    const tempFd = fs.openSync(tempPath, 'wx', 0o600);
+    try {
+      fs.writeFileSync(tempFd, Buffer.from(data));
+      if (expectedState.database.exists && expectedState.database.mode !== undefined) {
+        fs.fchmodSync(tempFd, expectedState.database.mode);
+      }
+      fs.fsyncSync(tempFd);
+    } finally {
+      fs.closeSync(tempFd);
+    }
+
+    // Recheck after export/write so a non-cooperating SQLite writer cannot be
+    // silently overwritten merely because it raced with the temporary write.
+    if (!sameDatabaseFileState(captureDatabaseFileState(filename), expectedState)) {
+      throw new SqlJsConcurrentModificationError(filename);
+    }
+
+    fs.renameSync(tempPath, filename);
+    tempPath = undefined;
+    fsyncDirectory(directory);
+    return captureDatabaseFileState(filename);
+  } finally {
+    if (tempPath) {
+      try { fs.unlinkSync(tempPath); } catch { /* best-effort cleanup */ }
+    }
+    if (lockFd !== undefined) {
+      fs.closeSync(lockFd);
+      try { fs.unlinkSync(lockPath); } catch { /* preserve the original error */ }
+    }
+  }
+}
 
 /**
  * Get the SQLite database implementation. Prefers native `better-sqlite3`
@@ -41,9 +228,14 @@ export async function getDatabaseImplementation(): Promise<any> {
       const mod: any = await import('better-sqlite3');
       const BetterSqlite3 = mod.default ?? mod;
       if (typeof BetterSqlite3 === 'function') {
+        // Importing the JS wrapper can succeed even when its native binding is
+        // missing or incompatible with the current Node ABI. Probe an actual
+        // in-memory connection before selecting it.
+        const probe = new BetterSqlite3(':memory:');
+        probe.close();
         cachedImpl = BetterSqlite3;
         cachedImplKind = 'better-sqlite3';
-        console.log('✅ Using native better-sqlite3');
+        console.error('✅ Using native better-sqlite3');
         return cachedImpl;
       }
     } catch {
@@ -53,7 +245,7 @@ export async function getDatabaseImplementation(): Promise<any> {
 
   // 2. Fall back to sql.js (WASM, no build tools).
   try {
-    console.log('✅ Using sql.js (WASM SQLite, no build tools required)');
+    console.error('✅ Using sql.js (WASM SQLite, no build tools required)');
 
     // sql.js requires async initialization
     const mod = await import('sql.js');
@@ -88,6 +280,7 @@ function createSqlJsWrapper(SQL: any) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- sql.js Database instance
     private db: any;
     private filename: string;
+    private fileState: DatabaseFileState | null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- sql.js Statement instances
     private activeStatements: Map<number, any> = new Map();
     // Cache wrappers by SQL text so repeated db.prepare(sameSql) returns the
@@ -102,21 +295,17 @@ function createSqlJsWrapper(SQL: any) {
 
     constructor(filename: string, _options?: unknown) {
       this.filename = filename;
+      const loaded = filename === ':memory:' ? null : loadSqlJsDatabaseFile(filename);
+      this.fileState = loaded?.state ?? null;
 
       // In-memory database
       if (filename === ':memory:') {
         this.db = new SQL.Database();
       } else {
         // File-based database - use safe fs module (no eval)
-        try {
-          if (fs.existsSync(filename)) {
-            const buffer = fs.readFileSync(filename);
-            this.db = new SQL.Database(buffer);
-          } else {
-            this.db = new SQL.Database();
-          }
-        } catch (error) {
-          console.warn('⚠️  Could not read database file:', (error as Error).message);
+        if (loaded!.data) {
+          this.db = new SQL.Database(loaded!.data);
+        } else {
           this.db = new SQL.Database();
         }
       }
@@ -247,14 +436,8 @@ function createSqlJsWrapper(SQL: any) {
       // Save to file if needed
       if (this.filename !== ':memory:') {
         try {
-          // Create parent directories if they don't exist
-          const dir = path.dirname(this.filename);
-          if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-          }
-
           const data = this.db.export();
-          fs.writeFileSync(this.filename, Buffer.from(data));
+          this.fileState = persistSqlJsDatabase(this.filename, data, this.fileState!);
         } catch (error) {
           console.error('❌ Could not save database to file:', (error as Error).message);
           throw error;
@@ -263,6 +446,13 @@ function createSqlJsWrapper(SQL: any) {
     }
 
     close() {
+      let saveError: unknown;
+      try {
+        this.save();
+      } catch (error) {
+        saveError = error;
+      }
+
       // Clear interval timer
       if (this.intervalId) {
         clearInterval(this.intervalId);
@@ -280,9 +470,8 @@ function createSqlJsWrapper(SQL: any) {
       this.activeStatements.clear();
       this.statementCache.clear();
 
-      // Save to file before closing
-      this.save();
       this.db.close();
+      if (saveError) throw saveError;
     }
 
     pragma(pragma: string, _options?: unknown) {
@@ -345,6 +534,14 @@ export function wrapExistingSqlJsDatabase(rawDb: any, filename: string = ':memor
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- prepared-statement wrapper objects
   const statementCache = new Map<string, any>();
   let statementCounter = 0;
+  const loaded = filename === ':memory:' ? null : loadSqlJsDatabaseFile(filename);
+  let fileState = loaded?.state ?? null;
+  if (loaded?.data) {
+    const rawDigest = createHash('sha256').update(rawDb.export()).digest('hex');
+    if (rawDigest !== fileState!.database.sha256) {
+      throw new SqlJsConcurrentModificationError(filename);
+    }
+  }
 
   return {
     prepare(sql: string) {
@@ -435,21 +632,25 @@ export function wrapExistingSqlJsDatabase(rawDb: any, filename: string = ':memor
 
     save() {
       if (filename !== ':memory:') {
-        const dir = path.dirname(filename);
-        if (!fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true }); }
         const data = rawDb.export();
-        fs.writeFileSync(filename, Buffer.from(data));
+        fileState = persistSqlJsDatabase(filename, data, fileState!);
       }
     },
 
     close() {
+      let saveError: unknown;
+      try {
+        this.save();
+      } catch (error) {
+        saveError = error;
+      }
       for (const [, stmt] of activeStatements.entries()) {
         try { stmt.free(); } catch { /* already freed */ }
       }
       activeStatements.clear();
       statementCache.clear();
-      this.save();
       rawDb.close();
+      if (saveError) throw saveError;
     },
 
     pragma(pragma: string, _options?: unknown) {

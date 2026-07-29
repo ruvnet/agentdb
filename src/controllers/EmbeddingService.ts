@@ -28,6 +28,11 @@ export class EmbeddingService {
    */
   async initialize(): Promise<void> {
     if (this.config.provider === 'transformers') {
+      if (process.env.AGENTDB_DISABLE_TRANSFORMERS === '1') {
+        console.error('Transformers.js disabled by AGENTDB_DISABLE_TRANSFORMERS');
+        this.pipeline = null;
+        return;
+      }
       // Use transformers.js for local embeddings
       try {
         const transformers = await import('@xenova/transformers');
@@ -55,7 +60,7 @@ export class EmbeddingService {
         }
 
         this.pipeline = await transformers.pipeline('feature-extraction', this.config.model);
-        console.log(`Transformers.js loaded: ${this.config.model}`);
+        console.error(`Transformers.js loaded: ${this.config.model}`);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.warn(`Transformers.js initialization failed: ${errorMessage}`);
