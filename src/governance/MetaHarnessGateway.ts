@@ -74,16 +74,18 @@ export class MetaHarnessGateway {
 
   async evaluatePromotion(evidence: PromotionEvidence): Promise<PromotionDecision> {
     validatePromotionEvidence(evidence);
-    await (await this.load()).assertMetaHarnessSafePayload(evidence);
-    return (await this.load()).evaluateMetaHarnessPromotion(evidence);
+    const api = await this.load();
+    await api.assertMetaHarnessSafePayload(evidence);
+    return api.evaluateMetaHarnessPromotion(evidence);
   }
 
   async verifyReplay(
     bundle: unknown,
     pinnedGateFingerprint?: string,
   ): Promise<Record<string, unknown>> {
-    await (await this.load()).assertMetaHarnessSafePayload(bundle);
-    return (await this.load()).verifyMetaHarnessReplay(
+    const api = await this.load();
+    await api.assertMetaHarnessSafePayload(bundle);
+    return api.verifyMetaHarnessReplay(
       bundle,
       pinnedGateFingerprint ? { pinnedGateFingerprint } : {},
     );
@@ -92,7 +94,8 @@ export class MetaHarnessGateway {
   async scanRewardHacks(
     trajectory: Record<string, unknown>,
   ): Promise<{ clean: boolean; findings: unknown[] }> {
-    return (await this.load()).scanMetaHarnessRewardHacks(trajectory);
+    const api = await this.load();
+    return api.scanMetaHarnessRewardHacks(trajectory);
   }
 }
 
@@ -110,4 +113,3 @@ function validatePromotionEvidence(evidence: PromotionEvidence): void {
     }
   }
 }
-
