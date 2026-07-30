@@ -64,6 +64,18 @@ export {
   buildSafeSetClause,
   ValidationError,
 } from './security/input-validation.js';
+export {
+  buildMcpToolPolicy,
+  filterMcpTools,
+  isMcpToolAllowed,
+  type AgentDbMcpProfile,
+  type McpToolPolicy,
+} from './security/mcp-policy.js';
+export {
+  MetaHarnessGateway,
+  type PromotionDecision,
+  type PromotionEvidence,
+} from './governance/MetaHarnessGateway.js';
 
 // Vector Quantization
 export {

@@ -41,10 +41,16 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import {
+  buildMcpToolPolicy,
+  filterMcpTools,
+  isMcpToolAllowed,
+} from '../security/mcp-policy.js';
 
 // ES module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const toolPolicy = buildMcpToolPolicy();
 
 // stdout belongs exclusively to JSON-RPC when running over stdio. Route every
 // transitive diagnostic (including legacy controller console.log calls) to
@@ -930,13 +936,16 @@ const tools = [
 // Tool Handlers
 // ============================================================================
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return { tools };
+  return { tools: filterMcpTools(tools, toolPolicy) };
 });
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
+    if (!isMcpToolAllowed(name, toolPolicy)) {
+      throw new Error(`MCP tool "${name}" is not permitted by the active AgentDB capability policy`);
+    }
     switch (name) {
       // ======================================================================
       // CORE VECTOR DB OPERATIONS

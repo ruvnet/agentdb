@@ -212,7 +212,7 @@
     "commander": "^12.1.0",
     "hnswlib-node": "^3.0.0",
     "inquirer": "^9.3.8",
-    "ruvector": "^0.1.30",
+    "ruvector": "^0.2.40",
     "ruvector-attention-wasm": "^0.1.32",
     "ruvector-graph-transformer-wasm": "^2.0.4"
   },
