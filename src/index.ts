@@ -76,6 +76,12 @@ export {
   type PromotionDecision,
   type PromotionEvidence,
 } from './governance/MetaHarnessGateway.js';
+export {
+  RvfExperimentBranch,
+  StaleExperimentBaselineError,
+  type ExperimentAnchor,
+  type ExperimentReceipt,
+} from './governance/RvfExperimentBranch.js';
 
 // Vector Quantization
 export {
