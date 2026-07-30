@@ -18,6 +18,7 @@ export interface ExperimentAnchor {
   commitSha: string;
   benchmarkHash: string;
   embeddingSpaceHash: string;
+  experimentalRevision: string;
 }
 
 export interface ExperimentReceipt {
@@ -37,6 +38,29 @@ export class StaleExperimentBaselineError extends Error {
   constructor() {
     super('The parent RVF generation changed after the experiment branch was created');
     this.name = 'StaleExperimentBaselineError';
+  }
+}
+
+export class StaleExperimentRevisionError extends Error {
+  readonly code = 'AGENTDB_STALE_EXPERIMENT_REVISION';
+
+  constructor() {
+    super('Embedding-space changes require a new experimental revision');
+    this.name = 'StaleExperimentRevisionError';
+  }
+}
+
+export function assertExperimentRevisionCompatible(
+  previous: ExperimentAnchor,
+  next: ExperimentAnchor,
+): void {
+  validateAnchor(previous);
+  validateAnchor(next);
+  if (
+    previous.embeddingSpaceHash !== next.embeddingSpaceHash
+    && previous.experimentalRevision === next.experimentalRevision
+  ) {
+    throw new StaleExperimentRevisionError();
   }
 }
 

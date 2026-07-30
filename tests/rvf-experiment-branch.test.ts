@@ -3,7 +3,13 @@ import { MetaHarnessGateway } from '../src/governance/MetaHarnessGateway.js';
 import {
   RvfExperimentBranch,
   StaleExperimentBaselineError,
+  StaleExperimentRevisionError,
+  assertExperimentRevisionCompatible,
 } from '../src/governance/RvfExperimentBranch.js';
+import {
+  createEmbeddingSpaceIdentity,
+  type EmbeddingSpaceIdentityInput,
+} from '../src/embedding/EmbeddingSpaceIdentity.js';
 
 function store(options: {
   id: string;
@@ -35,13 +41,48 @@ const anchor = {
   commitSha: 'abc123',
   benchmarkHash: 'bench-sha256',
   embeddingSpaceHash: 'space-sha256',
+  experimentalRevision: 'experiment-v1',
 };
 const evidence = {
   baseline: { primary: 0.5, noopRate: 0.1, costPerWin: 2 },
   candidate: { primary: 0.7, noopRate: 0.05, costPerWin: 1 },
 };
 
+const identityInput = (queryTemplate: string): EmbeddingSpaceIdentityInput => ({
+  modelId: 'example/e5-pinned',
+  modelArtifactHash: 'sha256:model',
+  tokenizerHash: 'sha256:tokenizer',
+  promptTemplateHash: 'sha256:prompt',
+  poolingStrategy: 'mean',
+  truncationLength: 512,
+  outputDimension: 8,
+  outputDtype: 'float32',
+  normalization: 'l2',
+  runtimeRevision: 'onnx:sha256',
+  distanceMetric: 'cosine',
+  rolePolicy: {
+    kind: 'asymmetric',
+    prefixPolicy: 'e5-retrieval',
+    prefixPolicyVersion: 'artifact-v1',
+    queryTemplate,
+    passageTemplate: 'passage: {text}',
+  },
+});
+
 describe('RvfExperimentBranch', () => {
+  it('requires a new revision when only the query template changes', () => {
+    const previousIdentity = createEmbeddingSpaceIdentity(identityInput('query: {text}'));
+    const nextIdentity = createEmbeddingSpaceIdentity(identityInput('query_instruction: {text}'));
+    const previous = { ...anchor, embeddingSpaceHash: previousIdentity.hash };
+    const stale = { ...previous, embeddingSpaceHash: nextIdentity.hash };
+
+    expect(() => assertExperimentRevisionCompatible(previous, stale))
+      .toThrow(StaleExperimentRevisionError);
+    expect(() => assertExperimentRevisionCompatible(previous, {
+      ...stale,
+      experimentalRevision: 'experiment-v2',
+    })).not.toThrow();
+  });
   it('binds lineage, anchors and deterministic promotion evidence', async () => {
     const parent = store({ id: 'parent', path: '/store/live.rvf' });
     const child = store({
@@ -82,4 +123,3 @@ describe('RvfExperimentBranch', () => {
       .rejects.toBeInstanceOf(StaleExperimentBaselineError);
   });
 });
-

@@ -14,6 +14,7 @@ Each experiment binds:
 - repository and commit SHA;
 - benchmark artifact hash;
 - embedding-space identity hash;
+- experimental revision;
 - parent and candidate RVF fingerprints;
 - verified parent/child lineage;
 - candidate witness validity;
@@ -23,10 +24,13 @@ The parent fingerprint is checked again before authorization. Any parent change
 causes a stale-baseline failure. Successful authorization returns a deterministic
 receipt; a separate trusted workflow performs atomic promotion.
 
+A manifest transition that changes the canonical embedding-space hash must
+also advance the experimental revision. This prevents a query-template change
+from silently reusing results produced in a different embedding space.
+
 ## Consequences
 
 Candidates cannot corrupt the live corpus, silently change their baseline or
 gain release credentials. The fingerprint reads only store identity, status and
 segment metadata, so authorization cost is bounded by segment count rather than
 vector count.
-

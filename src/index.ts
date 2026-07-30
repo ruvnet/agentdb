@@ -96,6 +96,8 @@ export {
 export {
   RvfExperimentBranch,
   StaleExperimentBaselineError,
+  StaleExperimentRevisionError,
+  assertExperimentRevisionCompatible,
   type ExperimentAnchor,
   type ExperimentReceipt,
 } from './governance/RvfExperimentBranch.js';
