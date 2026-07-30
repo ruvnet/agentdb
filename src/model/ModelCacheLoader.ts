@@ -4,7 +4,7 @@
  * Resolution order:
  * 1. AGENTDB_MODEL_PATH env var (user override)
  * 2. Bundled .rvf at <package>/dist/models/<modelId>.rvf
- * 3. Existing @xenova/transformers/.cache/ directory
+ * 3. Existing Transformers.js cache directory
  * 4. Previously extracted temp dir
  * 5. null (caller falls through to network download)
  */
@@ -61,6 +61,8 @@ export class ModelCacheLoader {
 
     // 3. Check existing transformers.js cache locations
     const cacheDirs = [
+      path.join(process.cwd(), 'node_modules', '@huggingface', 'transformers', '.cache'),
+      // Preserve already-downloaded v2 models during the runtime migration.
       path.join(process.cwd(), 'node_modules', '@xenova', 'transformers', '.cache'),
       path.join(os.homedir(), '.cache', 'huggingface', 'hub'),
     ];

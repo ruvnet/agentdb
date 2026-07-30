@@ -77,8 +77,8 @@ export class EnhancedEmbeddingService extends EmbeddingService {
    */
   async similarity(textA: string, textB: string): Promise<number> {
     const [embeddingA, embeddingB] = await Promise.all([
-      this.embed(textA),
-      this.embed(textB),
+      this.embedPassage(textA),
+      this.embedPassage(textB),
     ]);
 
     if (this.wasmSearch) {
@@ -97,8 +97,8 @@ export class EnhancedEmbeddingService extends EmbeddingService {
     corpus: string[],
     k: number = 5
   ): Promise<Array<{ text: string; similarity: number; index: number }>> {
-    const queryEmbedding = await this.embed(query);
-    const corpusEmbeddings = await this.embedBatch(corpus);
+    const queryEmbedding = await this.embedQuery(query);
+    const corpusEmbeddings = await this.embedPassageBatch(corpus);
 
     let similarities: number[];
 

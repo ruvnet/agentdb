@@ -1,6 +1,6 @@
 /**
  * AgentDB Install Embeddings Command
- * Install optional embedding dependencies (@xenova/transformers + onnxruntime)
+ * Install optional embedding dependencies (@huggingface/transformers + onnxruntime)
  */
 
 import { spawnSync } from 'child_process';
@@ -27,20 +27,20 @@ export async function installEmbeddingsCommand(options: InstallEmbeddingsOptions
   try {
     // Check if already installed
     try {
-      require.resolve('@xenova/transformers');
-      console.log(`${colors.yellow}⚠️  @xenova/transformers is already installed${colors.reset}`);
+      require.resolve('@huggingface/transformers');
+      console.log(`${colors.yellow}⚠️  @huggingface/transformers is already installed${colors.reset}`);
       console.log(`   Checking for updates...`);
     } catch (e) {
-      console.log(`${colors.blue}ℹ Installing @xenova/transformers...${colors.reset}`);
+      console.log(`${colors.blue}ℹ Installing @huggingface/transformers...${colors.reset}`);
     }
 
     // Determine npm args (avoid shell string interpolation — use array form)
     const npmArgs = options.global
-      ? ['install', '-g', '@xenova/transformers']
-      : ['install', '@xenova/transformers'];
+      ? ['install', '-g', '@huggingface/transformers']
+      : ['install', '@huggingface/transformers'];
 
     console.log(`\n${colors.cyan}📦 Installing optional dependencies:${colors.reset}`);
-    console.log(`   - @xenova/transformers (ML models)`);
+    console.log(`   - @huggingface/transformers (ML models)`);
     console.log(`   - onnxruntime-node (native inference)`);
     console.log('');
 

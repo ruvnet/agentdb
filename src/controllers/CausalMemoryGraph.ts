@@ -158,7 +158,7 @@ export class CausalMemoryGraph {
     let embedding: Float32Array;
 
     if (this.embedder) {
-      embedding = await this.embedder.embed(mechanismText);
+      embedding = await this.embedder.embedPassage(mechanismText);
     } else {
       // Fallback to zero embedding if no embedder available
       embedding = new Float32Array(384).fill(0);
@@ -437,7 +437,7 @@ export class CausalMemoryGraph {
     }
 
     // Generate embedding for the query mechanism
-    const queryEmbedding = await this.embedder.embed(mechanism);
+    const queryEmbedding = await this.embedder.embedQuery(mechanism);
 
     // Search for similar causal edges using vectorBackend
     const results = this.vectorBackend.search(queryEmbedding, k * 2); // Get more to filter by confidence
@@ -620,7 +620,7 @@ export class CausalMemoryGraph {
     // Get embeddings for query (from node)
     const fromEpisode = this.db.prepare('SELECT task, output FROM episodes WHERE id = ?').get(fromMemoryId) as any;
     const queryText = fromEpisode ? `${fromEpisode.task}: ${fromEpisode.output}` : '';
-    const queryEmbedding = await this.embedder!.embed(queryText);
+    const queryEmbedding = await this.embedder!.embedQuery(queryText);
 
     // Get embeddings and hierarchy levels for all chain nodes
     const allNodeIds = new Set<number>();
@@ -636,7 +636,7 @@ export class CausalMemoryGraph {
       const episode = this.db.prepare('SELECT task, output FROM episodes WHERE id = ?').get(nodeId) as any;
       if (episode) {
         const text = `${episode.task}: ${episode.output}`;
-        const embedding = await this.embedder!.embed(text);
+        const embedding = await this.embedder!.embedPassage(text);
         nodeEmbeddings.set(nodeId, embedding);
 
         // Calculate hierarchy level (depth from root)

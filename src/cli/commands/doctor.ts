@@ -58,11 +58,11 @@ export async function doctorCommand(options: DoctorOptions = {}): Promise<void> 
 
   // Check if optional dependencies are available
   try {
-    require('@xenova/transformers');
-    console.log('  ✅ @xenova/transformers available (embeddings enabled)');
+    require('@huggingface/transformers');
+    console.log('  ✅ @huggingface/transformers available (embeddings enabled)');
     passedChecks++;
   } catch {
-    console.log('  ⚠️  @xenova/transformers not installed (using mock embeddings)');
+    console.log('  ⚠️  @huggingface/transformers not installed (using mock embeddings)');
     console.log('     Run: agentdb install-embeddings');
     warnings++;
   }
@@ -256,13 +256,13 @@ export async function doctorCommand(options: DoctorOptions = {}): Promise<void> 
 
   // Embedding optimization
   try {
-    require('@xenova/transformers');
+    require('@huggingface/transformers');
     recommendations.push('✅ Transformers.js available - use real embeddings for better accuracy.');
     recommendations.push('   💡 Batch operations for 10-50x embedding speedup:');
     recommendations.push('      agentdb reflexion batch-store episodes.json');
   } catch {
     recommendations.push('💡 Install embeddings for production use:');
-    recommendations.push('   npm install @xenova/transformers');
+    recommendations.push('   npm install @huggingface/transformers');
     recommendations.push('   or: agentdb install-embeddings');
   }
 

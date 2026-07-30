@@ -6,7 +6,10 @@
 
 export { ReflexionMemory } from './ReflexionMemory.js';
 export { SkillLibrary } from './SkillLibrary.js';
-export { EmbeddingService } from './EmbeddingService.js';
+export {
+  EmbeddingService,
+  registerEmbeddingModelRolePolicy
+} from './EmbeddingService.js';
 export { WASMVectorSearch } from './WASMVectorSearch.js';
 export { HNSWIndex } from './HNSWIndex.js';
 export { EnhancedEmbeddingService } from './EnhancedEmbeddingService.js';

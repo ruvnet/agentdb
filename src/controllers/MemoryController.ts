@@ -14,6 +14,11 @@
  */
 
 import type { VectorBackend } from '../backends/VectorBackend.js';
+import {
+  assertEmbeddingSpaceCompatible,
+  type EmbeddingSpaceIdentity,
+  type MemoryProvenance
+} from '../embedding/EmbeddingSpaceIdentity.js';
 import { SelfAttentionController } from './attention/SelfAttentionController.js';
 import { CrossAttentionController } from './attention/CrossAttentionController.js';
 import { MultiHeadAttentionController } from './attention/MultiHeadAttentionController.js';
@@ -32,6 +37,8 @@ export interface MemoryControllerConfig {
   defaultTopK?: number;
   /** Default similarity threshold */
   defaultThreshold?: number;
+  /** Authoritative embedding space for corpus mutations */
+  embeddingSpaceIdentity?: EmbeddingSpaceIdentity;
 }
 
 /**
@@ -50,6 +57,10 @@ export interface Memory {
   timestamp?: number;
   /** Additional metadata */
   metadata?: Record<string, any>;
+  /** Typed origin and trust information for this memory */
+  provenance?: MemoryProvenance;
+  /** Space in which embedding was produced */
+  embeddingSpaceIdentity?: EmbeddingSpaceIdentity;
 }
 
 /**
@@ -68,6 +79,11 @@ export interface SearchOptions {
   temporalWeight?: number;
   /** Weight by importance score */
   weighByImportance?: boolean;
+  /**
+   * Identity of the supplied query vector. A mismatch is allowed for
+   * vector-only reads, but never for corpus mutation or cache reuse.
+   */
+  embeddingSpaceIdentity?: EmbeddingSpaceIdentity;
 }
 
 /**
@@ -131,6 +147,7 @@ export class MemoryController {
     if (!memory.id || !memory.embedding || memory.embedding.length === 0) {
       throw new Error('Memory must have id and non-empty embedding');
     }
+    this.assertMutationIdentity(memory.embeddingSpaceIdentity);
 
     // Add timestamp if not provided
     const storedMemory: Memory = {
@@ -146,6 +163,8 @@ export class MemoryController {
       const embedding = new Float32Array(memory.embedding);
       this.vectorBackend.insert(memory.id, embedding, {
         ...memory.metadata,
+        provenance: memory.provenance,
+        embeddingSpaceIdentity: memory.embeddingSpaceIdentity,
         namespace: namespace || this.config.namespace
       });
     }
@@ -184,6 +203,9 @@ export class MemoryController {
     if (!existing) {
       return false;
     }
+    this.assertMutationIdentity(
+      updates.embeddingSpaceIdentity ?? existing.embeddingSpaceIdentity
+    );
 
     const updated: Memory = {
       ...existing,
@@ -223,6 +245,13 @@ export class MemoryController {
     query: number[],
     options: SearchOptions = {}
   ): Promise<SearchResult[]> {
+    if (this.config.embeddingSpaceIdentity && options.embeddingSpaceIdentity) {
+      assertEmbeddingSpaceCompatible(
+        this.config.embeddingSpaceIdentity,
+        options.embeddingSpaceIdentity,
+        'vector-read'
+      );
+    }
     const {
       topK = this.config.defaultTopK || 10,
       threshold = this.config.defaultThreshold || 0.0,
@@ -267,6 +296,17 @@ export class MemoryController {
     return results
       .sort((a, b) => b.score - a.score)
       .slice(0, topK);
+  }
+
+  private assertMutationIdentity(identity?: EmbeddingSpaceIdentity): void {
+    const expected = this.config.embeddingSpaceIdentity;
+    if (!expected) return;
+    if (!identity) {
+      throw new Error(
+        'Memory mutation requires embeddingSpaceIdentity when the controller has an authoritative space'
+      );
+    }
+    assertEmbeddingSpaceCompatible(expected, identity, 'corpus-mutation');
   }
 
   /**

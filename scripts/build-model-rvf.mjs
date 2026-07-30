@@ -41,6 +41,7 @@ function findModelSource() {
   if (sourceDir) return sourceDir;
 
   const candidates = [
+    path.join(packageRoot, 'node_modules', '@huggingface', 'transformers', '.cache', 'Xenova', MODEL_ID),
     path.join(packageRoot, 'node_modules', '@xenova', 'transformers', '.cache', 'Xenova', MODEL_ID),
     path.join(process.env.HOME || '', '.cache', 'huggingface', 'hub', 'Xenova', MODEL_ID),
     path.join(process.env.HOME || '', '.cache', 'huggingface', 'Xenova', MODEL_ID),

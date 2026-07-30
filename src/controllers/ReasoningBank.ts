@@ -172,7 +172,7 @@ export class ReasoningBank {
    */
   async storePattern(pattern: ReasoningPattern): Promise<number> {
     // Generate embedding from approach text
-    const embedding = await this.embedder.embed(
+    const embedding = await this.embedder.embedPassage(
       `${pattern.taskType}: ${pattern.approach}`
     );
 
@@ -245,7 +245,7 @@ export class ReasoningBank {
     // Generate embedding if task string provided (v1 API compatibility)
     let queryEmbedding: Float32Array;
     if (query.task && !query.taskEmbedding) {
-      queryEmbedding = await this.embedder.embed(query.task);
+      queryEmbedding = await this.embedder.embedQuery(query.task);
     } else if (query.taskEmbedding) {
       queryEmbedding = query.taskEmbedding;
     } else {
@@ -444,7 +444,7 @@ export class ReasoningBank {
       if (patternId) {
         const pattern = this.getPattern(patternId);
         if (pattern?.approach) {
-          const embedding = await this.embedder.embed(
+          const embedding = await this.embedder.embedPassage(
             `${pattern.taskType}: ${pattern.approach}`
           );
           embeddings.push(embedding);
@@ -568,7 +568,7 @@ export class ReasoningBank {
     if (this.learningBackend) {
       const pattern = this.getPattern(patternId);
       if (pattern?.approach) {
-        const embedding = await this.embedder.embed(
+        const embedding = await this.embedder.embedPassage(
           `${pattern.taskType}: ${pattern.approach}`
         );
         this.learningBackend.addSample(embedding, success);

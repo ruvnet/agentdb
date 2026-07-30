@@ -95,7 +95,7 @@ export class SkillLibrary {
       const graphAdapter = this.graphBackend as any as GraphDatabaseAdapter;
 
       const text = this.buildSkillText(skill);
-      const embedding = await this.embedder.embed(text);
+      const embedding = await this.embedder.embedPassage(text);
 
       const nodeId = await graphAdapter.storeSkill(
         {
@@ -147,7 +147,7 @@ export class SkillLibrary {
 
     // Generate and store embedding in VectorBackend
     const text = this.buildSkillText(skill);
-    const embedding = await this.embedder.embed(text);
+    const embedding = await this.embedder.embedPassage(text);
 
     // Store in VectorBackend with skill metadata (if available)
     if (this.vectorBackend) {
@@ -214,7 +214,7 @@ export class SkillLibrary {
     }
 
     // Generate query embedding
-    const queryEmbedding = await this.embedder.embed(task);
+    const queryEmbedding = await this.embedder.embedQuery(task);
 
     // Use GraphDatabaseAdapter if available (AgentDB v2)
     if (this.graphBackend && 'searchSkills' in this.graphBackend) {
@@ -328,7 +328,7 @@ export class SkillLibrary {
     }
 
     const { k = 5, minSuccessRate = 0.5 } = query;
-    const queryEmbedding = await this.embedder.embed(task);
+    const queryEmbedding = await this.embedder.embedQuery(task);
 
     // Fetch all skills with embeddings
     const stmt = this.db.prepare<DatabaseRows.Skill & { embedding: Buffer }>(`

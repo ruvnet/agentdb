@@ -104,7 +104,7 @@ export class CausalRecall {
 
     // Step 1: Vector similarity search
     const vectorStart = Date.now();
-    const queryEmbedding = await this.embedder.embed(queryText);
+    const queryEmbedding = await this.embedder.embedQuery(queryText);
     const candidates = await this.vectorSearch(queryEmbedding, k * 2); // Fetch 2k for reranking
     metrics.vectorSearchMs = Date.now() - vectorStart;
 
@@ -475,7 +475,7 @@ export class CausalRecall {
 
     try {
       // Step 1: Generate query embedding
-      const queryEmbedding = await this.embedder.embed(query);
+      const queryEmbedding = await this.embedder.embedQuery(query);
 
       // Step 2: Vector similarity search
       const candidates = await this.vectorSearch(queryEmbedding, k * 2);

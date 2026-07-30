@@ -3162,7 +3162,7 @@ ${colors.bright}SETUP COMMANDS:${colors.reset}
       --in-memory         Use temporary in-memory database (:memory:)
 
   agentdb install-embeddings [--global]
-    Install optional embedding dependencies (@xenova/transformers)
+    Install optional embedding dependencies (@huggingface/transformers)
     By default uses mock embeddings - run this for real ML-powered embeddings
     Options:
       --global, -g        Install globally instead of locally

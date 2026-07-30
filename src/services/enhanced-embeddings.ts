@@ -2,7 +2,7 @@
  * Enhanced Embedding Service with RuVector Integration
  *
  * A comprehensive embedding service supporting:
- * - Multiple providers (@xenova/transformers, OpenAI, Cohere, custom)
+ * - Multiple providers (@huggingface/transformers, OpenAI, Cohere, custom)
  * - LRU cache with O(1) operations using doubly-linked list
  * - Batch processing with semaphore-controlled parallelism
  * - Text pre-processing pipeline (normalization, chunking, deduplication)
@@ -1084,7 +1084,7 @@ export class EnhancedEmbeddingService {
    */
   private async loadTransformersModel(): Promise<void> {
     try {
-      const transformers = await import('@xenova/transformers');
+      const transformers = await import('@huggingface/transformers');
 
       // Set HF token if available
       const hfToken = process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN;
@@ -1111,7 +1111,7 @@ export class EnhancedEmbeddingService {
   }
 
   /**
-   * Embed with @xenova/transformers (single)
+   * Embed with @huggingface/transformers (single)
    */
   private async embedWithTransformers(text: string): Promise<Float32Array> {
     if (!this.pipeline) {

@@ -104,7 +104,7 @@ export class ReflexionMemory {
       const graphAdapter = this.graphBackend as any as GraphDatabaseAdapter;
 
       // Generate embedding for the task
-      const taskEmbedding = await this.embedder.embed(episode.task);
+      const taskEmbedding = await this.embedder.embedPassage(episode.task);
 
       // Create episode node using GraphDatabaseAdapter
       const nodeId = await graphAdapter.storeEpisode(
@@ -140,7 +140,7 @@ export class ReflexionMemory {
     // Use generic GraphBackend if available
     if (this.graphBackend) {
       // Generate embedding for the task
-      const taskEmbedding = await this.embedder.embed(episode.task);
+      const taskEmbedding = await this.embedder.embedPassage(episode.task);
 
       // Create episode node ID
       const nodeId = await this.graphBackend.createNode(['Episode'], {
@@ -207,7 +207,7 @@ export class ReflexionMemory {
 
     // Generate and store embedding
     const text = this.buildEpisodeText(episode);
-    const embedding = await this.embedder.embed(text);
+    const embedding = await this.embedder.embedPassage(text);
 
     // Use vector backend if available (150x faster retrieval)
     if (this.vectorBackend) {
@@ -297,7 +297,7 @@ export class ReflexionMemory {
     k: number
   ): Promise<Float32Array> {
     const queryText = currentState ? `${task}\n${currentState}` : task;
-    let queryEmbedding = await this.embedder.embed(queryText);
+    let queryEmbedding = await this.embedder.embedQuery(queryText);
 
     // Enhance query with GNN if learning backend available
     if (this.learningBackend) {
@@ -1342,7 +1342,7 @@ export class ReflexionMemory {
         const buf: Buffer = row.embedding;
         embedding = new Float32Array(buf.buffer, buf.byteOffset, buf.length / 4);
       } else {
-        embedding = await this.embedder.embed(this.buildEpisodeText(episode));
+        embedding = await this.embedder.embedPassage(this.buildEpisodeText(episode));
       }
 
       // Re-insert through the proper public APIs so the GuardedBackend

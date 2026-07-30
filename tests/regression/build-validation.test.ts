@@ -162,7 +162,7 @@ describe('Build Validation Tests', () => {
       );
 
       expect(packageJson.dependencies).toHaveProperty('@modelcontextprotocol/sdk');
-      expect(packageJson.dependencies).toHaveProperty('@xenova/transformers');
+      expect(packageJson.optionalDependencies).toHaveProperty('@huggingface/transformers');
       expect(packageJson.dependencies).toHaveProperty('chalk');
       expect(packageJson.dependencies).toHaveProperty('commander');
       expect(packageJson.dependencies).toHaveProperty('sql.js');

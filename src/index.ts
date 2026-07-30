@@ -25,8 +25,25 @@ export { LearningSystem } from './controllers/LearningSystem.js';
 export { ReasoningBank } from './controllers/ReasoningBank.js';
 
 // Embedding services
-export { EmbeddingService } from './controllers/EmbeddingService.js';
+export {
+  EmbeddingService,
+  registerEmbeddingModelRolePolicy
+} from './controllers/EmbeddingService.js';
 export { EnhancedEmbeddingService } from './controllers/EnhancedEmbeddingService.js';
+export {
+  EmbeddingSpaceMismatchError,
+  applyRoleTemplate,
+  assertEmbeddingSpaceCompatible,
+  createEmbeddingSpaceIdentity,
+  embeddingSpacesEqual,
+  type EmbeddingCompatibilityOperation,
+  type EmbeddingProvenanceType,
+  type EmbeddingRole,
+  type EmbeddingRolePolicy,
+  type EmbeddingSpaceIdentity,
+  type EmbeddingSpaceIdentityInput,
+  type MemoryProvenance
+} from './embedding/index.js';
 
 // Model cache (offline .rvf model loading)
 export { ModelCacheLoader } from './model/ModelCacheLoader.js';

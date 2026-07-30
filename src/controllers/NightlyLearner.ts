@@ -240,7 +240,7 @@ export class NightlyLearner {
     const episodeEmbeddings: Float32Array[] = [];
     for (const episode of episodes) {
       const text = `${episode.task}: ${episode.output}`;
-      const embedding = await this.embedder.embed(text);
+      const embedding = await this.embedder.embedPassage(text);
       episodeEmbeddings.push(embedding);
     }
 

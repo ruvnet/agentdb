@@ -420,7 +420,7 @@ export class LearningSystem {
     }
 
     // Generate new embedding
-    const embedding = await this.embedder.embed(state);
+    const embedding = await this.embedder.embedPassage(state);
 
     // Store embedding
     this.db.prepare(`
@@ -911,8 +911,8 @@ export class LearningSystem {
       for (const episode of sourceEpisodes) {
         // Check similarity if transferring between tasks
         if (sourceTask && targetTask) {
-          const sourceEmbed = await this.embedder.embed(episode.state);
-          const targetEmbed = await this.embedder.embed(targetTask);
+          const sourceEmbed = await this.embedder.embedPassage(episode.state);
+          const targetEmbed = await this.embedder.embedPassage(targetTask);
           const similarity = this.cosineSimilarity(sourceEmbed, targetEmbed);
 
           if (similarity < minSimilarity) {
@@ -958,8 +958,8 @@ export class LearningSystem {
 
         // Check if target has similar state
         if (targetTask) {
-          const stateEmbed = await this.embedder.embed(state);
-          const targetEmbed = await this.embedder.embed(targetTask);
+          const stateEmbed = await this.embedder.embedPassage(state);
+          const targetEmbed = await this.embedder.embedPassage(targetTask);
           const similarity = this.cosineSimilarity(stateEmbed, targetEmbed);
 
           if (similarity >= minSimilarity) {
@@ -1024,7 +1024,7 @@ export class LearningSystem {
     } = options;
 
     // Get query embedding
-    const queryEmbed = await this.embedder.embed(query);
+    const queryEmbed = await this.embedder.embedQuery(query);
 
     // Find similar past experiences
     const allExperiences = this.db.prepare(`

@@ -107,7 +107,7 @@ node tests/validation/comprehensive-validation.js
 - **@ruvector/gnn@^0.1.15** - GNN query enhancement
 - **sql.js** - WASM SQLite fallback
 - **vitest** - Test runner
-- **@xenova/transformers** - Embedding generation (optional)
+- **@huggingface/transformers** - Embedding generation (optional)
 
 ### Environment
 - Node.js 18+
