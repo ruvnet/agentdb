@@ -142,7 +142,9 @@ export class ReasoningBank {
         ts INTEGER DEFAULT (strftime('%s', 'now')),
         task_type TEXT NOT NULL,
         approach TEXT NOT NULL,
+        context TEXT,
         success_rate REAL NOT NULL DEFAULT 0.0,
+        outcome TEXT,
         uses INTEGER DEFAULT 0,
         avg_reward REAL DEFAULT 0.0,
         tags TEXT,
@@ -153,6 +155,17 @@ export class ReasoningBank {
       CREATE INDEX IF NOT EXISTS idx_patterns_success_rate ON reasoning_patterns(success_rate);
       CREATE INDEX IF NOT EXISTS idx_patterns_uses ON reasoning_patterns(uses);
     `);
+
+    // Migrate databases created before context/outcome existed —
+    // BatchOperations.insertPatterns writes both columns and fails on
+    // pre-migration schemas (SQLite has no ADD COLUMN IF NOT EXISTS).
+    for (const column of ['context TEXT', 'outcome TEXT']) {
+      try {
+        this.db.exec(`ALTER TABLE reasoning_patterns ADD COLUMN ${column};`);
+      } catch {
+        // duplicate column — schema already current
+      }
+    }
 
     // Create pattern embeddings table
     this.db.exec(`
