@@ -18,6 +18,16 @@
 
 A single-file cognitive container — vectors, indexes, learning state, and a cryptographic audit trail in one `.rvf`. Self-learning search improves up to **36% from feedback alone**, with no manual tuning. Runs in Node, the browser, edge runtimes, and offline.
 
+<!-- ecosystem-cta:start -->
+### Explore the wider ecosystem
+
+[![AgentDB: Give your next idea a workspace. Try ruOS.](docs/assets/ecosystem-cta.svg)](https://ruos.cognitum.one/)
+
+Building agents that remember? Explore the wider ecosystem.
+
+**[Explore Cognitum One](https://cognitum.one/) · [Try ruOS](https://ruos.cognitum.one/)**, an agentic desktop in your browser.
+<!-- ecosystem-cta:end -->
+
 ### Why AgentDB?
 
 > Most vector databases store embeddings and call it done. AgentDB watches *which* results your agent actually used, learns from that signal, and ranks the next query better. The bandit underneath also picks the right RL algorithm, the right compression tier, and the right pattern weighting on its own — so the database itself gets sharper while you focus on the agent.
