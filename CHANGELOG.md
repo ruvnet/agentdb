@@ -5,6 +5,17 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Raised the optional `better-sqlite3` dependency from `^11.8.1` to `^12.8.0`.
+  11.x has no Node 24 prebuild, so it was compiled locally, and builds against
+  Node 24.19+ headers abort with `Assertion failed: (env) != nullptr` when a
+  prepared statement is garbage-collected (nodejs/node#65446). 12.x ships a
+  Node 24 prebuild without the faulty cleanup hook. better-sqlite3 12 requires
+  Node 20 or newer.
+
 ## [3.0.0-alpha.19] - 2026-07-29
 
 ### Fixed
