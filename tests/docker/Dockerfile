@@ -11,15 +11,15 @@
 # Run:    docker run --rm agentdb-test
 # ─────────────────────────────────────────────────────
 
-# ── Stage 1: Node 18 (minimum supported) ────────────
-FROM node:18-slim AS test-node18
+# ── Stage 1: Node 20.9.0 (minimum API compatibility) ────────────
+FROM node:20.9.0-slim AS test-node-minimum
 WORKDIR /app
 COPY agentdb-3.0.0-alpha.0.tgz ./
 RUN npm init -y && npm install --no-optional ./agentdb-3.0.0-alpha.0.tgz 2>&1
 COPY tests/docker/test-clean-install.mjs ./test-clean-install.mjs
 RUN echo "═══ Testing on Node $(node -v) ($(uname -m)) ═══" && \
     node test-clean-install.mjs && \
-    echo "node18:PASS" > /app/result.txt
+    echo "node-minimum:PASS" > /app/result.txt
 
 # ── Stage 2: Node 22 (current LTS) ──────────────────
 FROM node:22-slim AS test-node22
@@ -44,21 +44,21 @@ RUN echo "═══ Testing on Node $(node -v) Alpine/musl ($(uname -m)) ══�
 # ── Final: aggregate results ─────────────────────────
 FROM node:22-slim AS final
 WORKDIR /results
-COPY --from=test-node18  /app/result.txt ./node18.txt
+COPY --from=test-node-minimum  /app/result.txt ./node-minimum.txt
 COPY --from=test-node22  /app/result.txt ./node22.txt
 COPY --from=test-alpine  /app/result.txt ./alpine.txt
 RUN cat *.txt && echo "" && \
     echo "══════════════════════════════════════════════════" && \
     echo "  AgentDB Clean-Install Tests: ALL STAGES PASSED" && \
-    echo "  ✓ Node 18 (minimum supported)" && \
+    echo "  ✓ Node 20.9.0 (minimum API compatibility)" && \
     echo "  ✓ Node 22 (current LTS)" && \
     echo "  ✓ Node 20 Alpine/musl (alternative libc)" && \
     echo "══════════════════════════════════════════════════" && \
     echo "" && \
     echo "Cross-platform notes:" && \
-    echo "  • Linux glibc: Verified (Node 18 + 22 slim)" && \
+    echo "  • Linux glibc: Verified (Node 20.9.0 + 22 slim)" && \
     echo "  • Linux musl:  Verified (Alpine)" && \
     echo "  • macOS:  sql.js WASM + pure JS SIMD = no native deps" && \
     echo "  • Windows: sql.js WASM + pure JS SIMD = no native deps" && \
     echo ""
-CMD ["cat", "node18.txt", "node22.txt", "alpine.txt"]
+CMD ["cat", "node-minimum.txt", "node22.txt", "alpine.txt"]

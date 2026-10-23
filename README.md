@@ -59,6 +59,8 @@ Bandit re-tunes ranking / RL choice / compression  ──► next query is smart
 
 ## Quick Start
 
+Node.js 20.9.0 or newer is required, matching the patched sharp runtime used by local Transformers embeddings. Node 18 is no longer supported.
+
 There are **three ways to use AgentDB** depending on what you're building. Pick whichever matches your stack:
 
 | | **npm library** | **CLI** | **MCP server** |

@@ -599,7 +599,7 @@ npm run bench:quick
 ## Dependencies
 
 ### Required
-- **Node.js:** >= 18.0.0
+- **Node.js:** >= 20.9.0
 - **vitest:** ^1.1.0
 - **typescript:** ^5.3.3
 - **ts-node:** ^10.9.2

@@ -518,11 +518,11 @@ npx agentdb@2.0.0-alpha.1 mcp start
 
 **Solution 1 - Check Node.js version**:
 ```bash
-node --version  # Should be >= 18.0.0
+node --version  # Should be >= 20.9.0
 
 # Update Node.js if needed
-nvm install 18
-nvm use 18
+nvm install 24.22.1
+nvm use 24.22.1
 ```
 
 **Solution 2 - Reinstall package**:

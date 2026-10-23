@@ -14,6 +14,14 @@ interface DoctorOptions {
   verbose?: boolean;
 }
 
+export function isSupportedNodeVersion(version: string): boolean {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(version);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 20 || (major === 20 && minor >= 9);
+}
+
 export async function doctorCommand(options: DoctorOptions = {}): Promise<void> {
   const { dbPath = './agentdb.db', verbose = false } = options;
 
@@ -27,12 +35,11 @@ export async function doctorCommand(options: DoctorOptions = {}): Promise<void> 
   // Check 1: Node.js Version
   console.log('\n📦 Node.js Environment');
   const nodeVersion = process.version;
-  const nodeMajor = parseInt(nodeVersion.slice(1).split('.')[0]);
-  if (nodeMajor >= 18) {
+  if (isSupportedNodeVersion(nodeVersion)) {
     console.log(`  ✅ Node.js ${nodeVersion} (compatible)`);
     passedChecks++;
   } else {
-    console.log(`  ❌ Node.js ${nodeVersion} (requires v18+)`);
+    console.log(`  ❌ Node.js ${nodeVersion} (requires v20.9.0+)`);
     failedChecks++;
   }
 

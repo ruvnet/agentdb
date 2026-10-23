@@ -507,7 +507,7 @@ export AGENTDB_EMBEDDING_DIM=384
 # Update to latest version
 npm install -g agentdb@latest
 
-# Check node version (need Node 18+)
+# Check node version (need Node 20.9.0+)
 node --version
 
 # Try with explicit path

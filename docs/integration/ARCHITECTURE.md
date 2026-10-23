@@ -1646,7 +1646,7 @@ class AttentionService {
 **Docker Deployment**:
 
 ```dockerfile
-FROM node:18-alpine
+FROM node:22-alpine
 
 # Install dependencies
 WORKDIR /app
