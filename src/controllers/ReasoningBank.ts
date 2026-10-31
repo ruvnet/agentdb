@@ -24,6 +24,7 @@ import { EmbeddingService } from './EmbeddingService.js';
 import type { VectorBackend, SearchResult } from '../backends/VectorBackend.js';
 import { searchVectors } from '../backends/VectorBackend.js';
 import { sqlExactSource } from '../backends/ExactSearch.js';
+import { TopK, squaredNorm, blobToFloat32 } from '../utils/top-k.js';
 
 /** Parse JSON from DB row values without throwing on malformed data. */
 function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
@@ -47,6 +48,57 @@ export interface ReasoningPattern {
   metadata?: Record<string, any>;
   createdAt?: number;
   similarity?: number; // Cosine similarity score (for search results)
+  /** Rank score when reward-aware reranking is on (ADR-015) */
+  score?: number;
+}
+
+/**
+ * Reward-aware rerank weights (ADR-015):
+ * score = similarity·w.similarity + successRate·w.successRate + avgReward·w.reward
+ * with successRate and avgReward clamped to [0, 1].
+ */
+export interface RerankWeights {
+  similarity: number;
+  successRate: number;
+  reward: number;
+}
+
+export const DEFAULT_RERANK_WEIGHTS: Readonly<RerankWeights> = Object.freeze({
+  similarity: 0.7,
+  successRate: 0.2,
+  reward: 0.1,
+});
+
+export interface ReasoningBankOptions {
+  /** Rerank search results by outcome as well as similarity (default true) */
+  rerank?: boolean;
+  /** Override the default weights; similarity should stay the largest */
+  rerankWeights?: Partial<RerankWeights>;
+}
+
+function resolveWeights(base: RerankWeights, override?: Partial<RerankWeights>): RerankWeights {
+  const weights = { ...base, ...override };
+  for (const [name, value] of Object.entries(weights)) {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`rerank weight ${name} must be a non-negative finite number`);
+    }
+  }
+  return weights;
+}
+
+const clamp01 = (x: number | undefined): number =>
+  Number.isFinite(x) ? Math.min(1, Math.max(0, x as number)) : 0;
+
+/** Rank score for a pattern with a similarity (ADR-015) */
+export function rerankScore(
+  similarity: number,
+  successRate: number | undefined,
+  avgReward: number | undefined,
+  weights: RerankWeights = DEFAULT_RERANK_WEIGHTS
+): number {
+  return weights.similarity * similarity
+    + weights.successRate * clamp01(successRate)
+    + weights.reward * clamp01(avgReward);
 }
 
 export interface PatternSearchQuery {
@@ -58,6 +110,10 @@ export interface PatternSearchQuery {
   threshold?: number;
   /** Enable GNN-based query enhancement (requires LearningBackend) */
   useGNN?: boolean;
+  /** Rerank by outcome as well as similarity; default from the constructor (true) */
+  rerank?: boolean;
+  /** Per-query rerank weights */
+  rerankWeights?: Partial<RerankWeights>;
   filters?: {
     taskType?: string;
     minSuccessRate?: number;
@@ -113,6 +169,9 @@ export class ReasoningBank {
   private idMapping: Map<number, string> = new Map();
   private nextVectorId = 0;
 
+  private rerankByDefault: boolean;
+  private rerankWeights: RerankWeights;
+
   /**
    * Constructor supports both legacy (v1) and new (v2) modes
    *
@@ -126,12 +185,15 @@ export class ReasoningBank {
     db: IDatabaseConnection,
     embedder: EmbeddingService,
     vectorBackend?: VectorBackend,
-    learningBackend?: LearningBackend
+    learningBackend?: LearningBackend,
+    options: ReasoningBankOptions = {}
   ) {
     this.db = db;
     this.embedder = embedder;
     this.vectorBackend = vectorBackend;
     this.learningBackend = learningBackend;
+    this.rerankByDefault = options.rerank ?? true;
+    this.rerankWeights = resolveWeights(DEFAULT_RERANK_WEIGHTS, options.rerankWeights);
     this.cache = new Map();
     this.initializeSchema();
   }
@@ -298,19 +360,33 @@ export class ReasoningBank {
       }
     }
 
+    // Reranking needs a candidate pool wider than k
+    const weights = this.weightsFor(query);
+    const poolSize = weights ? k * 3 : k;
+
     // Perform vector search; small or short index answers are completed by
     // exact cosine over pattern_embeddings (ADR-015)
     const results = await searchVectors(
       this.vectorBackend!,
       queryEmbedding,
-      k,
+      poolSize,
       { threshold },
       this.exactPatternSource()
     );
 
     // Hydrate with metadata from SQLite. A shared backend can return other
     // controllers' vectors, which carry no patternId.
-    return this.hydratePatterns(results.filter((r) => r.metadata?.patternId != null));
+    const patterns = this.hydratePatterns(results.filter((r) => r.metadata?.patternId != null));
+    if (!weights) return patterns.slice(0, k);
+
+    for (const p of patterns) p.score = rerankScore(p.similarity ?? 0, p.successRate, p.avgReward, weights);
+    return patterns.sort((a, b) => b.score! - a.score!).slice(0, k);
+  }
+
+  /** Rerank weights for this query, or null when reranking is off */
+  private weightsFor(query: PatternSearchQuery): RerankWeights | null {
+    if (!(query.rerank ?? this.rerankByDefault)) return null;
+    return query.rerankWeights ? resolveWeights(this.rerankWeights, query.rerankWeights) : this.rerankWeights;
   }
 
   /** pattern_embeddings as an exact-search source; index ids are per-process, so dedupe on patternId */
@@ -379,38 +455,33 @@ export class ReasoningBank {
 
     const rows = stmt.all(...params);
 
-    // Calculate similarities
-    const candidates = rows.map(row => {
-      const embedding = new Float32Array(
-        (row.embedding as Buffer).buffer,
-        (row.embedding as Buffer).byteOffset,
-        (row.embedding as Buffer).byteLength / 4
-      );
+    // Threshold on similarity, then rank by the rerank score (or similarity
+    // when reranking is off) in a bounded top-k; only winners are converted.
+    const weights = this.weightsFor(query);
+    const queryNorm = Math.sqrt(squaredNorm(query.taskEmbedding));
+    const top = new TopK<{ row: (typeof rows)[number]; embedding: Float32Array; similarity: number }>(k);
+    for (const row of rows) {
+      const embedding = blobToFloat32(row.embedding as Buffer);
+      const similarity = this.cosineSimilarity(query.taskEmbedding, embedding, queryNorm);
+      if (!(similarity >= threshold)) continue;
+      const score = weights ? rerankScore(similarity, row.success_rate, row.avg_reward, weights) : similarity;
+      top.push(score, { row, embedding, similarity });
+    }
 
-      const similarity = this.cosineSimilarity(query.taskEmbedding, embedding);
-
-      return {
-        id: row.id,
-        taskType: row.task_type,
-        approach: row.approach,
-        successRate: row.success_rate,
-        uses: row.uses,
-        avgReward: row.avg_reward,
-        tags: safeJsonParse(row.tags, []),
-        metadata: safeJsonParse(row.metadata, {}),
-        createdAt: row.ts,
-        embedding,
-        similarity,
-      };
-    });
-
-    // Filter by threshold and sort by similarity
-    const filtered = candidates
-      .filter(c => c.similarity >= threshold)
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, k);
-
-    return filtered;
+    return top.sorted().map(({ score, item: { row, embedding, similarity } }) => ({
+      id: row.id,
+      taskType: row.task_type,
+      approach: row.approach,
+      successRate: row.success_rate,
+      uses: row.uses,
+      avgReward: row.avg_reward,
+      tags: safeJsonParse(row.tags, []),
+      metadata: safeJsonParse(row.metadata, {}),
+      createdAt: row.ts,
+      embedding,
+      similarity,
+      ...(weights ? { score } : {}),
+    }));
   }
 
   /**
@@ -555,7 +626,7 @@ export class ReasoningBank {
     patternId: number,
     success: boolean,
     reward: number
-  ): void {
+  ): boolean {
     const stmt = this.db.prepare(`
       UPDATE reasoning_patterns
       SET
@@ -565,10 +636,11 @@ export class ReasoningBank {
       WHERE id = ?
     `);
 
-    stmt.run(success ? 1 : 0, reward, patternId);
+    const result = stmt.run(success ? 1 : 0, reward, patternId);
 
     // Invalidate cache
     this.cache.clear();
+    return result.changes > 0;
   }
 
   /**
@@ -577,18 +649,25 @@ export class ReasoningBank {
    * Updates pattern stats and adds training sample to LearningBackend
    * for future GNN model improvements.
    *
+   * The updated success rate and average reward feed the reward-aware
+   * rerank in searchPatterns() (ADR-015).
+   *
    * @param patternId - Pattern ID to update
    * @param success - Whether the pattern was successful
    * @param reward - Optional reward value (default: 1 for success, 0 for failure)
+   * @returns false when no pattern has that id
    */
   async recordOutcome(
     patternId: number,
     success: boolean,
     reward?: number
-  ): Promise<void> {
+  ): Promise<boolean> {
+    if (reward !== undefined && !Number.isFinite(reward)) {
+      throw new Error('reward must be a finite number');
+    }
     // Update pattern statistics
     const actualReward = reward !== undefined ? reward : (success ? 1.0 : 0.0);
-    this.updatePatternStats(patternId, success, actualReward);
+    if (!this.updatePatternStats(patternId, success, actualReward)) return false;
 
     // Add to GNN training buffer if available
     if (this.learningBackend) {
@@ -600,6 +679,7 @@ export class ReasoningBank {
         this.learningBackend.addSample(embedding, success);
       }
     }
+    return true;
   }
 
   /**
@@ -690,24 +770,23 @@ export class ReasoningBank {
   }
 
   /**
-   * Calculate cosine similarity between two vectors
+   * Calculate cosine similarity between two vectors (`normA` is a's
+   * precomputed Math.sqrt(squaredNorm(a)))
    */
-  private cosineSimilarity(a: Float32Array, b: Float32Array): number {
+  private cosineSimilarity(a: Float32Array, b: Float32Array, normA: number): number {
     if (a.length !== b.length) {
       throw new Error('Vectors must have same length');
     }
 
     let dotProduct = 0;
-    let normA = 0;
     let normB = 0;
 
     for (let i = 0; i < a.length; i++) {
       dotProduct += a[i] * b[i];
-      normA += a[i] * a[i];
       normB += b[i] * b[i];
     }
 
-    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    const denom = normA * Math.sqrt(normB);
     return denom === 0 ? 0 : dotProduct / denom;
   }
 }

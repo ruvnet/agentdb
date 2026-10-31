@@ -26,6 +26,9 @@ const LEARNING_TOOLS = [
   'learning_transfer',
   'learner_discover',
   'reward_signal',
+  // Outcome feedback that drives reward-aware ranking (ADR-015)
+  'agentdb_pattern_feedback',
+  'agentdb_skill_feedback',
   // Memory writes. Destructive tools are in ADMIN_ONLY_TOOLS.
   'agentdb_insert',
   'agentdb_insert_batch',

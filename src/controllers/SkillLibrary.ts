@@ -196,6 +196,36 @@ export class SkillLibrary {
   }
 
   /**
+   * Record the outcome of using a skill (ADR-015). Updates uses, success
+   * rate and average reward, which retrieveSkills() ranks by; the average
+   * latency only moves when `latencyMs` is given.
+   *
+   * @param reward - defaults to 1 for success, 0 for failure
+   * @returns false when no skill has that id
+   */
+  recordOutcome(skillId: number, success: boolean, reward?: number, latencyMs?: number): boolean {
+    if (reward !== undefined && !Number.isFinite(reward)) {
+      throw new Error('reward must be a finite number');
+    }
+    if (latencyMs !== undefined && (!Number.isFinite(latencyMs) || latencyMs < 0)) {
+      throw new Error('latencyMs must be a non-negative finite number');
+    }
+    this.queryCache.invalidateCategory('skills');
+    const actualReward = reward ?? (success ? 1 : 0);
+    const result = this.db.prepare(`
+      UPDATE skills
+      SET
+        success_rate = (success_rate * uses + ?) / (uses + 1),
+        avg_reward = (avg_reward * uses + ?) / (uses + 1),
+        avg_latency_ms = CASE WHEN ? IS NULL THEN avg_latency_ms
+                              ELSE (avg_latency_ms * uses + ?) / (uses + 1) END,
+        uses = uses + 1
+      WHERE id = ?
+    `).run(success ? 1 : 0, actualReward, latencyMs ?? null, latencyMs ?? null, skillId);
+    return result.changes > 0;
+  }
+
+  /**
    * Retrieve skills relevant to a task
    */
   async searchSkills(query: SkillQuery): Promise<Skill[]> {
