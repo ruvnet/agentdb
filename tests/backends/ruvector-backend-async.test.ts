@@ -98,11 +98,13 @@ describe('RuVectorBackend', () => {
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'agentdb-rv-cwd-'));
     process.chdir(scratch);
     try {
-      const temp = new RuVectorBackend({ dimension: DIM, metric: 'cosine' });
-      await temp.initialize();
-      await temp.insertAsync('x', unit(1));
-      expect((await temp.searchAsync(unit(1), 1))[0]?.id).toBe('x');
-      temp.close();
+      for (const storagePath of [undefined, ':memory:']) {
+        const temp = new RuVectorBackend({ dimension: DIM, metric: 'cosine', storagePath });
+        await temp.initialize();
+        await temp.insertAsync('x', unit(1));
+        expect((await temp.searchAsync(unit(1), 1))[0]?.id).toBe('x');
+        temp.close();
+      }
       expect(fs.readdirSync(scratch)).toEqual([]);
     } finally {
       process.chdir(cwd);

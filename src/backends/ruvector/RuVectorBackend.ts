@@ -326,7 +326,8 @@ export class RuVectorBackend implements VectorBackendAsync {
    */
   private async resolveStoragePath(): Promise<string> {
     const pathModule = await import('path');
-    if (this.config.storagePath) {
+    // ':memory:' would become a literal file of that name in the cwd
+    if (this.config.storagePath && this.config.storagePath !== ':memory:') {
       validatePath(this.config.storagePath);
       return pathModule.resolve(this.config.storagePath);
     }

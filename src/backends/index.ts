@@ -11,8 +11,12 @@ export type {
   VectorConfig,
   SearchResult,
   SearchOptions,
-  VectorStats
+  VectorStats,
+  VectorBackendAsync
 } from './VectorBackend.js';
+
+// Search that works for sync and async-native backends (RuVector, RVF)
+export { searchVectors, isAsyncVectorBackend } from './VectorBackend.js';
 
 // Backend implementations
 export { RuVectorBackend } from './ruvector/RuVectorBackend.js';
