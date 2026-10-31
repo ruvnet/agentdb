@@ -712,12 +712,12 @@ describe('ADR-007 NativeAccelerator', () => {
       expect(result).toBe(false);
     });
 
-    it('should return false for batch insert without native', () => {
-      expect(accel.graphBatchInsertNodes({}, [{ id: 'a', data: {} }])).toBe(false);
+    it('should return false for batch insert without native', async () => {
+      expect(await accel.graphBatchInsertNodes({}, [{ id: 'a', data: {} }])).toBe(false);
     });
 
-    it('should return null for cypher query without native', () => {
-      expect(accel.graphCypherQuery({}, 'MATCH (n) RETURN n')).toBeNull();
+    it('should return null for cypher query without native', async () => {
+      expect(await accel.graphCypherQuery({}, 'MATCH (n) RETURN n')).toBeNull();
     });
   });
 
@@ -726,8 +726,8 @@ describe('ADR-007 NativeAccelerator', () => {
       expect(typeof accel.coreBatchInsertAvailable).toBe('boolean');
     });
 
-    it('should return false for batch insert without native', () => {
-      expect(accel.coreBatchInsert({}, [{ id: 'a', vector: new Float32Array(4) }])).toBe(false);
+    it('should return false for batch insert without native', async () => {
+      expect(await accel.coreBatchInsert({}, [{ id: 'a', vector: new Float32Array(4) }])).toBe(false);
     });
   });
 

@@ -17,6 +17,15 @@
  * - $exists: Field exists
  */
 
+const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function assertIdentifier(name: string, what: string): string {
+  if (typeof name !== 'string' || !IDENTIFIER.test(name)) {
+    throw new Error(`Invalid ${what} in metadata filter: ${JSON.stringify(name)}`);
+  }
+  return name;
+}
+
 export type FilterOperator = '$eq' | '$ne' | '$gt' | '$gte' | '$lt' | '$lte' | '$in' | '$nin' | '$contains' | '$exists';
 
 export type FilterValue = string | number | boolean | string[] | number[] | { [op in FilterOperator]?: any };
@@ -168,19 +177,32 @@ export class MetadataFilter {
   static toSQL(filters: MetadataFilters, tableName: string = ''): { where: string; params: any[] } {
     const conditions: string[] = [];
     const params: any[] = [];
-    const prefix = tableName ? `${tableName}.` : '';
+    // Table, column and JSON-path segments are identifiers only; the JSON
+    // path itself is bound as a parameter rather than spliced into SQL.
+    const prefix = tableName ? `${assertIdentifier(tableName, 'table name')}.` : '';
 
     for (const [field, filter] of Object.entries(filters)) {
       // For metadata fields, use JSON extraction
       const isMetadata = field.startsWith('metadata.');
-      const columnRef = isMetadata
-        ? `json_extract(${prefix}metadata, '$.${field.slice(9)}')`
-        : `${prefix}${field}`;
+      let columnRef: string;
+      let refParams: any[];
+      if (isMetadata) {
+        const segments = field.slice(9).split('.');
+        segments.forEach((segment) => assertIdentifier(segment, 'metadata path segment'));
+        columnRef = `json_extract(${prefix}metadata, ?)`;
+        refParams = [`$.${segments.join('.')}`];
+      } else {
+        columnRef = `${prefix}${assertIdentifier(field, 'field')}`;
+        refParams = [];
+      }
+      const add = (condition: string, ...values: any[]): void => {
+        conditions.push(condition);
+        params.push(...refParams, ...values);
+      };
 
       if (typeof filter !== 'object' || Array.isArray(filter)) {
         // Simple equality
-        conditions.push(`${columnRef} = ?`);
-        params.push(filter);
+        add(`${columnRef} = ?`, filter);
       } else {
         // Operator-based filters
         const operators = filter as { [op in FilterOperator]?: any };
@@ -188,61 +210,52 @@ export class MetadataFilter {
         for (const [operator, operand] of Object.entries(operators)) {
           switch (operator as FilterOperator) {
             case '$eq':
-              conditions.push(`${columnRef} = ?`);
-              params.push(operand);
+              add(`${columnRef} = ?`, operand);
               break;
 
             case '$ne':
-              conditions.push(`${columnRef} != ?`);
-              params.push(operand);
+              add(`${columnRef} != ?`, operand);
               break;
 
             case '$gt':
-              conditions.push(`${columnRef} > ?`);
-              params.push(operand);
+              add(`${columnRef} > ?`, operand);
               break;
 
             case '$gte':
-              conditions.push(`${columnRef} >= ?`);
-              params.push(operand);
+              add(`${columnRef} >= ?`, operand);
               break;
 
             case '$lt':
-              conditions.push(`${columnRef} < ?`);
-              params.push(operand);
+              add(`${columnRef} < ?`, operand);
               break;
 
             case '$lte':
-              conditions.push(`${columnRef} <= ?`);
-              params.push(operand);
+              add(`${columnRef} <= ?`, operand);
               break;
 
             case '$in':
               if (Array.isArray(operand)) {
                 const placeholders = operand.map(() => '?').join(', ');
-                conditions.push(`${columnRef} IN (${placeholders})`);
-                params.push(...operand);
+                add(`${columnRef} IN (${placeholders})`, ...operand);
               }
               break;
 
             case '$nin':
               if (Array.isArray(operand)) {
                 const placeholders = operand.map(() => '?').join(', ');
-                conditions.push(`${columnRef} NOT IN (${placeholders})`);
-                params.push(...operand);
+                add(`${columnRef} NOT IN (${placeholders})`, ...operand);
               }
               break;
 
             case '$contains':
-              conditions.push(`${columnRef} LIKE ?`);
-              params.push(`%${operand}%`);
+              add(`${columnRef} LIKE ?`, `%${operand}%`);
               break;
 
             case '$exists':
               if (operand) {
-                conditions.push(`${columnRef} IS NOT NULL`);
+                add(`${columnRef} IS NOT NULL`);
               } else {
-                conditions.push(`${columnRef} IS NULL`);
+                add(`${columnRef} IS NULL`);
               }
               break;
           }

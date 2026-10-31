@@ -23,8 +23,32 @@ const LEARNING_TOOLS = [
   'learning_feedback',
   'learning_start_session',
   'learning_train',
+  'learning_transfer',
+  'learner_discover',
   'reward_signal',
+  // Memory writes. Destructive tools are in ADMIN_ONLY_TOOLS.
+  'agentdb_insert',
+  'agentdb_insert_batch',
+  'agentdb_pattern_store',
+  'agentdb_pattern_store_batch',
+  'causal_add_edge',
+  'consolidate_now',
+  'reflexion_store',
+  'reflexion_store_batch',
+  'skill_create',
+  'skill_create_batch',
 ] as const;
+
+/** Tools that reset or delete data: only the admin profile (or an explicit allow) grants them. */
+export const ADMIN_ONLY_TOOLS: readonly string[] = [
+  'agentdb_init',
+  'agentdb_delete',
+  'agentdb_delete_batch',
+  'agentdb_clear_cache',
+];
+
+/** Profile used when AGENTDB_MCP_PROFILE is unset */
+export const DEFAULT_MCP_PROFILE: AgentDbMcpProfile = 'learning';
 
 const PROFILE_TOOLS: Record<Exclude<AgentDbMcpProfile, 'admin'>, readonly string[]> = {
   readonly: READONLY_TOOLS,
@@ -50,7 +74,9 @@ export function buildMcpToolPolicy(
   env: Record<string, string | undefined> = process.env,
 ): McpToolPolicy {
   const rawProfile = env.AGENTDB_MCP_PROFILE?.trim();
-  const profile = rawProfile as AgentDbMcpProfile | undefined;
+  // Unset means the learning profile, not allow-all: destructive tools such
+  // as agentdb_init (reset) must be opted into with AGENTDB_MCP_PROFILE=admin.
+  const profile = (rawProfile || DEFAULT_MCP_PROFILE) as AgentDbMcpProfile;
   if (rawProfile && !['readonly', 'retrieval', 'learning', 'admin'].includes(rawProfile)) {
     throw new Error(`Unknown AGENTDB_MCP_PROFILE "${rawProfile}"`);
   }
@@ -58,14 +84,14 @@ export function buildMcpToolPolicy(
   const explicitAllow = parseList(env.AGENTDB_MCP_ALLOW);
   const deny = new Set(parseList(env.AGENTDB_MCP_DENY));
   let allow: Set<string> | null = null;
-  if (profile && profile !== 'admin') allow = new Set(PROFILE_TOOLS[profile]);
+  if (profile !== 'admin') allow = new Set(PROFILE_TOOLS[profile]);
   if (explicitAllow.length > 0) allow = new Set([...(allow ?? []), ...explicitAllow]);
 
   return {
-    profile: profile ?? null,
+    profile,
     allow,
     deny,
-    configured: Boolean(profile || explicitAllow.length || deny.size),
+    configured: Boolean(rawProfile || explicitAllow.length || deny.size),
   };
 }
 

@@ -120,7 +120,7 @@ export class HNSWLibBackend implements VectorBackend {
     );
     this.index.setEf(this.config.efSearch!);
 
-    console.log(
+    console.error(
       `[HNSWLibBackend] Initialized with dimension=${this.config.dimension}, ` +
         `metric=${metric}, M=${this.config.M}, efConstruction=${this.config.efConstruction}`
     );
@@ -298,8 +298,8 @@ export class HNSWLibBackend implements VectorBackend {
 
       await fs.writeFile(mappingsPath, JSON.stringify(mappings, null, 2));
 
-      console.log(`[HNSWLibBackend] Index saved to ${savePath}`);
-      console.log(`[HNSWLibBackend] Mappings saved to ${mappingsPath}`);
+      console.error(`[HNSWLibBackend] Index saved to ${savePath}`);
+      console.error(`[HNSWLibBackend] Mappings saved to ${mappingsPath}`);
     } catch (error) {
       console.error('[HNSWLibBackend] Failed to save index:', error);
       throw error;
@@ -315,7 +315,7 @@ export class HNSWLibBackend implements VectorBackend {
     }
 
     try {
-      console.log(`[HNSWLibBackend] Loading index from ${loadPath}...`);
+      console.error(`[HNSWLibBackend] Loading index from ${loadPath}...`);
 
       // Initialize index first
       const metricMap: Record<string, string> = {
@@ -351,7 +351,7 @@ export class HNSWLibBackend implements VectorBackend {
           this.config = { ...this.config, ...mappingsData.config };
         }
 
-        console.log(
+        console.error(
           `[HNSWLibBackend] ✅ Index loaded successfully (${this.idToLabel.size} vectors)`
         );
       } else {
@@ -436,7 +436,7 @@ export class HNSWLibBackend implements VectorBackend {
     if (this.index) {
       this.index.setEf(ef);
       this.config.efSearch = ef;
-      console.log(`[HNSWLibBackend] efSearch updated to ${ef}`);
+      console.error(`[HNSWLibBackend] efSearch updated to ${ef}`);
     }
   }
 

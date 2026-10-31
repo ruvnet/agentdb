@@ -437,6 +437,14 @@ export class TemporalCompressor {
 
   private decompressVector(json: string, tier: CompressionTier, dim: number): Float32Array {
     const data = JSON.parse(json);
+    if (data && data._native === true) {
+      // Written by the native compressor in compress()
+      const native = this.accel?.tensorDecompress(this.fromBase64(data.b64), dim) ?? null;
+      if (!native) {
+        throw new Error('Entry was compressed natively but @ruvector/gnn is not available to decompress it');
+      }
+      return native;
+    }
     switch (tier) {
       case 'none':
         return new Float32Array(data);

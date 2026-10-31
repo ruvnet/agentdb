@@ -11,7 +11,7 @@ import { SkillLibrary } from '../controllers/SkillLibrary.js';
 import { CausalMemoryGraph } from '../controllers/CausalMemoryGraph.js';
 import { EmbeddingService } from '../controllers/EmbeddingService.js';
 import { createBackend } from '../backends/factory.js';
-import type { VectorBackend } from '../backends/VectorBackend.js';
+import type { VectorBackend, VectorConfig } from '../backends/VectorBackend.js';
 import type { IDatabaseConnection } from '../types/database.types.js';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -68,10 +68,13 @@ export class AgentDB {
     await this.embedder.initialize();
 
     // Initialize vector backend (RuVector preferred, HNSWLib fallback)
+    // A file-backed AgentDB keeps its vector index beside the database; an
+    // in-memory one lets the backend use a private temp location.
     this.vectorBackend = await createBackend(this.config.vectorBackend || 'auto', {
       dimensions: vectorDimension,
-      metric: 'cosine'
-    });
+      metric: 'cosine',
+      storagePath: dbPath === ':memory:' ? undefined : `${dbPath}.ruvector`,
+    } as VectorConfig);
 
     // Initialize controllers WITH vector backend for optimized search
     // This enables 150x faster vector search via RuVector instead of SQLite brute-force
@@ -87,7 +90,7 @@ export class AgentDB {
 
     this.initialized = true;
 
-    console.log(`[AgentDB] Initialized with ${this.usingWasm ? 'sql.js WASM' : 'better-sqlite3'} + ${this.vectorBackend.name} vector backend`);
+    console.error(`[AgentDB] Initialized with ${this.usingWasm ? 'sql.js WASM' : 'better-sqlite3'} + ${this.vectorBackend.name} vector backend`);
   }
 
   /**
@@ -110,7 +113,7 @@ export class AgentDB {
       return db as unknown as IDatabaseConnection;
     } catch (error) {
       // better-sqlite3 not available or failed, try sql.js WASM
-      console.log('[AgentDB] better-sqlite3 not available, using sql.js WASM');
+      console.error('[AgentDB] better-sqlite3 not available, using sql.js WASM');
       return this.initializeSqlJsWasm(dbPath);
     }
   }
@@ -160,6 +163,11 @@ export class AgentDB {
   }
 
   async close(): Promise<void> {
+    if (this.vectorBackend) {
+      const backend = this.vectorBackend as VectorBackend & { flush?: () => Promise<void> };
+      await backend.flush?.().catch(() => { /* already logged by the backend */ });
+      backend.close();
+    }
     if (this.db) {
       this.db.close();
     }

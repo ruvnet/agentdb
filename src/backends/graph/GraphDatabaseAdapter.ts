@@ -103,6 +103,13 @@ export interface CausalEdge {
  * This replaces SQL.js as the primary database, using RuVector's graph DB
  * with Cypher queries, hyperedges, and integrated vector search.
  */
+/** k is spliced into Cypher text: accept only a positive integer */
+function cypherLimit(k: unknown): number {
+  const n = Math.floor(Number(k));
+  if (!Number.isFinite(n) || n < 1) throw new Error('k must be a positive integer');
+  return n;
+}
+
 export class GraphDatabaseAdapter {
   private db: GraphDatabase;
   private config: GraphDatabaseConfig;
@@ -131,7 +138,7 @@ export class GraphDatabaseAdapter {
       try {
         if (require('fs').existsSync(this.config.storagePath)) {
           this.db = GraphDatabase.open(this.config.storagePath);
-          console.log('✅ Opened existing RuVector graph database');
+          console.error('✅ Opened existing RuVector graph database');
           return;
         }
       } catch (e) {
@@ -145,7 +152,7 @@ export class GraphDatabaseAdapter {
         storagePath: this.config.storagePath
       });
 
-      console.log('✅ Created new RuVector graph database');
+      console.error('✅ Created new RuVector graph database');
 
     } catch (error) {
       throw new Error(
@@ -245,7 +252,7 @@ export class GraphDatabaseAdapter {
     // Note: This is a simplified version - actual implementation would use
     // the integrated vector search capabilities
     const result = await this.query(
-      `MATCH (e:Episode) RETURN e ORDER BY vector_similarity(e.embedding, $embedding) DESC LIMIT ${k}`
+      `MATCH (e:Episode) RETURN e ORDER BY vector_similarity(e.embedding, $embedding) DESC LIMIT ${cypherLimit(k)}`
     );
 
     return result.nodes.map(node => ({
@@ -263,7 +270,7 @@ export class GraphDatabaseAdapter {
   async searchSkills(embedding: Float32Array, k: number = 10): Promise<SkillNode[]> {
     // Use Cypher query to find similar skills
     const result = await this.query(
-      `MATCH (s:Skill) RETURN s LIMIT ${k}`
+      `MATCH (s:Skill) RETURN s LIMIT ${cypherLimit(k)}`
     );
 
     return result.nodes.map(node => ({

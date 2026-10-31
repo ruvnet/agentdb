@@ -36,7 +36,7 @@ const performanceLogs: PerformanceLog[] = [];
 function logPerformance(log: PerformanceLog): void {
   if (PERFORMANCE_LOGGING) {
     performanceLogs.push(log);
-    console.log(
+    console.error(
       `[AttentionService] ${log.mechanism} using ${log.backend}: ${log.durationMs.toFixed(2)}ms (input size: ${log.inputSize})`
     );
   }
@@ -82,7 +82,7 @@ async function loadWasmModule(): Promise<boolean> {
     wasmModule = wasm;
     wasmInitialized = true;
     if (PERFORMANCE_LOGGING) {
-      console.log('[AttentionService] WASM module loaded successfully');
+      console.error('[AttentionService] WASM module loaded successfully');
     }
     return true;
   } catch (error) {
@@ -105,7 +105,7 @@ async function loadNapiModule(): Promise<boolean> {
     napiModule = await import('@ruvector/attention');
     napiInitialized = true;
     if (PERFORMANCE_LOGGING) {
-      console.log('[AttentionService] NAPI module loaded successfully');
+      console.error('[AttentionService] NAPI module loaded successfully');
     }
     return true;
   } catch (error) {

@@ -46,11 +46,16 @@ import {
   filterMcpTools,
   isMcpToolAllowed,
 } from '../security/mcp-policy.js';
+import { resetDatabaseTables } from './reset-database.js';
 
 // ES module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const toolPolicy = buildMcpToolPolicy();
+
+// Request-size limits at the MCP boundary
+const MAX_INSERT_BATCH_ITEMS = 1000;
+const MAX_SEARCH_K = 100;
 
 // stdout belongs exclusively to JSON-RPC when running over stdio. Route every
 // transitive diagnostic (including legacy controller console.log calls) to
@@ -313,8 +318,7 @@ const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        db_path: { type: 'string', description: 'Database file path (optional, defaults to ./agentdb.db)', default: './agentdb.db' },
-        reset: { type: 'boolean', description: 'Reset database (delete existing)', default: false },
+        reset: { type: 'boolean', description: 'Reset the open database (drop all tables, then recreate the schema)', default: false },
       },
     },
   },
@@ -340,6 +344,7 @@ const tools = [
       properties: {
         items: {
           type: 'array',
+          maxItems: 1000,
           items: {
             type: 'object',
             properties: {
@@ -364,7 +369,7 @@ const tools = [
       type: 'object',
       properties: {
         query: { type: 'string', description: 'Search query text' },
-        k: { type: 'number', description: 'Number of results to return', default: 10 },
+        k: { type: 'number', description: 'Number of results to return (max 100)', default: 10, minimum: 1, maximum: 100 },
         min_similarity: { type: 'number', description: 'Minimum similarity threshold (0-1)', default: 0.0 },
         filters: {
           type: 'object',
@@ -427,7 +432,7 @@ const tools = [
       type: 'object',
       properties: {
         task: { type: 'string', description: 'Task to find similar episodes for' },
-        k: { type: 'number', description: 'Number of episodes to retrieve', default: 5 },
+        k: { type: 'number', description: 'Number of episodes to retrieve (max 100)', default: 5, minimum: 1, maximum: 100 },
         only_failures: { type: 'boolean', description: 'Only retrieve failures' },
         only_successes: { type: 'boolean', description: 'Only retrieve successes' },
         min_reward: { type: 'number', description: 'Minimum reward threshold' },
@@ -951,10 +956,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // CORE VECTOR DB OPERATIONS
       // ======================================================================
       case 'agentdb_init': {
-        const targetDbPath = (args?.db_path as string) || dbPath;
-
-        if (args?.reset && fs.existsSync(targetDbPath)) {
-          fs.unlinkSync(targetDbPath);
+        // Only ever the open database: a caller-supplied path is never touched
+        if (args?.reset === true) {
+          resetDatabaseTables(db);
         }
 
         // Initialize schema
@@ -967,7 +971,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             {
               type: 'text',
               text: `✅ AgentDB initialized successfully!\n` +
-                    `📍 Database: ${targetDbPath}\n` +
+                    `📍 Database: ${dbPath}\n` +
                     `📊 Tables created: ${stats.count}\n` +
                     `⚙️  Optimizations: WAL mode, cache_size=64MB\n` +
                     `🧠 Embedding service: ${embeddingService.constructor.name} ready`,
@@ -1011,7 +1015,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'agentdb_insert_batch': {
-        const items = (args?.items as any[]) || [];
+        const items = validateArrayLength<any>(args?.items ?? [], 'items', 0, MAX_INSERT_BATCH_ITEMS);
         const batchSize = (args?.batch_size as number) || 100;
 
         const episodes = items.map((item: any) => ({
@@ -1051,7 +1055,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'agentdb_search': {
         const queryText = args?.query as string;
-        const k = (args?.k as number) || 10;
+        const k = Math.floor(validateNumericRange(args?.k ?? 10, 'k', 1, MAX_SEARCH_K));
         const minSimilarity = (args?.min_similarity as number) || 0.0;
         const filters = args?.filters as any;
 
@@ -1185,7 +1189,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'reflexion_retrieve': {
         const episodes = await reflexion.retrieveRelevant({
           task: args?.task as string,
-          k: (args?.k as number) || 5,
+          k: Math.floor(validateNumericRange(args?.k ?? 5, 'k', 1, MAX_SEARCH_K)),
           onlyFailures: args?.only_failures as boolean | undefined,
           onlySuccesses: args?.only_successes as boolean | undefined,
           minReward: args?.min_reward as number | undefined,

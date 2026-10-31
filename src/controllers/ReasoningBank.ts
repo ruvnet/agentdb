@@ -22,6 +22,7 @@ import type { IDatabaseConnection, DatabaseRows } from '../types/database.types.
 import { normalizeRowId } from '../types/database.types.js';
 import { EmbeddingService } from './EmbeddingService.js';
 import type { VectorBackend, SearchResult } from '../backends/VectorBackend.js';
+import { searchVectors } from '../backends/VectorBackend.js';
 
 /** Parse JSON from DB row values without throwing on malformed data. */
 function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
@@ -94,6 +95,9 @@ export interface LearningBackend {
     finalLoss: number;
   }>;
 }
+
+/** How long getPatternStats() results are reused */
+const PATTERN_STATS_TTL_MS = 5 * 60 * 1000;
 
 export class ReasoningBank {
   private db: IDatabaseConnection;
@@ -278,7 +282,7 @@ export class ReasoningBank {
     // Optional: Apply GNN enhancement
     if (query.useGNN && this.learningBackend) {
       // Get initial candidates for GNN context
-      const candidates = this.vectorBackend!.search(queryEmbedding, k * 3, { threshold: 0.0 });
+      const candidates = await searchVectors(this.vectorBackend!, queryEmbedding, k * 3, { threshold: 0.0 });
 
       if (candidates.length > 0) {
         // Retrieve neighbor embeddings for GNN
@@ -293,7 +297,7 @@ export class ReasoningBank {
     }
 
     // Perform vector search
-    const results = this.vectorBackend!.search(queryEmbedding, k, { threshold });
+    const results = await searchVectors(this.vectorBackend!, queryEmbedding, k, { threshold });
 
     // Hydrate with metadata from SQLite
     return this.hydratePatterns(results);
@@ -461,8 +465,9 @@ export class ReasoningBank {
   getPatternStats(): PatternStats {
     // Check cache first
     const cacheKey = 'pattern_stats';
-    if (this.cache.has(cacheKey)) {
-      return this.cache.get(cacheKey);
+    const cached = this.cache.get(cacheKey) as { value: PatternStats; expiresAt: number } | undefined;
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
     }
 
     // Total patterns
@@ -515,9 +520,9 @@ export class ReasoningBank {
       highPerformingPatterns: highPerfRow?.count ?? 0,
     };
 
-    // Cache for 5 minutes
-    this.cache.set(cacheKey, stats);
-    setTimeout(() => this.cache.delete(cacheKey), 5 * 60 * 1000);
+    // Cache for 5 minutes. Expiry is checked on read: a timer here kept every
+    // short-lived process that called getPatternStats() alive for 5 minutes.
+    this.cache.set(cacheKey, { value: stats, expiresAt: Date.now() + PATTERN_STATS_TTL_MS });
 
     return stats;
   }

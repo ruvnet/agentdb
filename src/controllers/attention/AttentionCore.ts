@@ -219,7 +219,7 @@ export class AttentionCoreCompute {
         const targetMax = 1.25; // 25% speedup target
 
         if (speedup >= targetMin) {
-          console.log(
+          console.error(
             `✅ Fused Attention achieved ${speedup.toFixed(2)}x speedup ` +
             `(target: ${targetMin.toFixed(2)}x-${targetMax.toFixed(2)}x, ` +
             `baseline: ${baselineTimeMs.toFixed(2)}ms, fused: ${fusedTimeMs.toFixed(2)}ms)`

@@ -61,6 +61,7 @@ const ALLOWED_PRAGMAS = new Set([
   'temp_store',
   'mmap_size',
   'wal_autocheckpoint',
+  'table_info',
 ]);
 
 /**
@@ -311,6 +312,28 @@ export function validateSqlIdentifier(name: string): string {
 }
 
 /**
+ * Validate caller-supplied filter keys as columns of `tableName`.
+ *
+ * Each key must be a plain identifier and an existing column (from
+ * PRAGMA table_info), so it can be interpolated into a WHERE clause.
+ * Returns the validated column names in input order.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- better-sqlite3 or the sql.js wrapper
+export function validateFilterColumns(db: any, tableName: string, keys: string[]): string[] {
+  const table = validateSqlIdentifier(tableName);
+  const columns = new Set(
+    (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name)
+  );
+  return keys.map((key) => {
+    const column = validateSqlIdentifier(key);
+    if (column !== key || !columns.has(column)) {
+      throw new ValidationError(`Unknown filter column: ${key}`, 'INVALID_COLUMN', 'filters');
+    }
+    return column;
+  });
+}
+
+/**
  * Validate table name against whitelist
  */
 export function validateTableName(tableName: string): string {
@@ -362,8 +385,20 @@ export function validatePragmaCommand(pragma: string): string {
     throw new ValidationError('PRAGMA command must be a non-empty string', 'INVALID_PRAGMA', 'pragma');
   }
 
-  // Extract the pragma name (before any = or space)
-  const pragmaName = pragma.trim().toLowerCase().split(/[=\s]/)[0];
+  // Match the whole command, not just its first token: "name", "name = value",
+  // or "table_info(identifier)". Anything else (e.g. a stacked "; DROP ...")
+  // is rejected.
+  const trimmed = pragma.trim();
+  const assignment = /^([a-z_]+)(\s*=\s*[A-Za-z0-9_-]+)?$/i.exec(trimmed);
+  const call = /^(table_info)\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\)$/i.exec(trimmed);
+  if (!assignment && !call) {
+    throw new ValidationError(
+      'Invalid PRAGMA command: expected "name", "name = value" or "table_info(table)"',
+      'INVALID_PRAGMA',
+      'pragma'
+    );
+  }
+  const pragmaName = (assignment ?? call)![1].toLowerCase();
 
   if (!ALLOWED_PRAGMAS.has(pragmaName)) {
     throw new ValidationError(
@@ -374,7 +409,7 @@ export function validatePragmaCommand(pragma: string): string {
   }
 
   // Return the full pragma for execution (e.g., "journal_mode = WAL")
-  return pragma.trim();
+  return trimmed;
 }
 
 /**

@@ -31,6 +31,16 @@ export interface SegmentVerifyResult { valid: boolean; crc: number; }
 
 const MAX_DIM = 4096;
 
+/**
+ * AdaptiveIndexTuner level numbers -> @ruvector/gnn compression configs.
+ * Only 'half' (level 1) is delegated: native pq8/pq4/binary train a codebook
+ * per vector, which reconstructs far worse than the JS fallbacks
+ * (cosine distance ~0.88 vs < 0.1 in tests/backends/adaptive-index-tuner).
+ */
+const TENSOR_LEVELS: Record<number, Record<string, unknown>> = {
+  1: { levelType: 'half', scale: 1.0 },
+};
+
 export class NativeAccelerator {
   private _simd: any = null;
   private _witnessVerify: ((chain: Uint8Array) => boolean) | null = null;
@@ -41,7 +51,7 @@ export class NativeAccelerator {
   private _adamWOptimizer: any = null;
   private _tensorCompress: any = null;
   private _routerSave: ((router: any, path: string) => Promise<void>) | null = null;
-  private _routerLoad: ((path: string) => Promise<any>) | null = null;
+  private _routerLoad: ((path: string, config: { dimension: number }) => Promise<any>) | null = null;
   private _sonaFlush = false;
   private _sonaContext = false;
   private _sonaBaseLora = false;
@@ -250,19 +260,43 @@ export class NativeAccelerator {
 
   get nativeTensorCompressAvailable(): boolean { return this._tensorCompress !== null; }
 
+  /**
+   * Compress with @ruvector/gnn at a numeric level (see TENSOR_LEVELS).
+   * Returns the native compressed JSON as UTF-8 bytes, or null when the
+   * level is not delegated or the package is unavailable.
+   */
   tensorCompress(vec: Float32Array, level: number): Uint8Array | null {
-    if (this._tensorCompress) { try { return this._tensorCompress.compress(vec, level); } catch { /* fallback */ } }
+    const config = TENSOR_LEVELS[level];
+    if (this._tensorCompress && config) {
+      try {
+        const json: string = this._tensorCompress.compressWithLevel(Array.from(vec), config);
+        return new TextEncoder().encode(json);
+      } catch { /* fallback */ }
+    }
     return null;
   }
 
   tensorDecompress(compressed: Uint8Array, dim: number): Float32Array | null {
-    if (this._tensorCompress) { try { return this._tensorCompress.decompress(compressed, dim); } catch { /* fallback */ } }
+    if (this._tensorCompress) {
+      try {
+        const out = this._tensorCompress.decompress(new TextDecoder().decode(compressed));
+        const vec = out instanceof Float32Array ? out : Float32Array.from(out);
+        if (vec.length === dim) return vec;
+      } catch { /* fallback */ }
+    }
     return null;
   }
 
+  /** No native batch API exists; compresses each vector in turn. */
   tensorBatchCompress(vecs: Float32Array[], level: number): Uint8Array[] | null {
-    if (this._tensorCompress) { try { return this._tensorCompress.batchCompress(vecs, level); } catch { /* fallback */ } }
-    return null;
+    if (!this._tensorCompress) return null;
+    const out: Uint8Array[] = [];
+    for (const vec of vecs) {
+      const compressed = this.tensorCompress(vec, level);
+      if (!compressed) return null;
+      out.push(compressed);
+    }
+    return out;
   }
 
   // ─── Router Persistence ───
@@ -274,8 +308,9 @@ export class NativeAccelerator {
     return false;
   }
 
-  async routerLoad(path: string): Promise<any | null> {
-    if (this._routerLoad) { try { return await this._routerLoad(path); } catch { /* fallback */ } }
+  /** Load a saved @ruvector/router SemanticRouter (load() is an instance method). */
+  async routerLoad(path: string, config: { dimension: number } = { dimension: 384 }): Promise<any | null> {
+    if (this._routerLoad) { try { return await this._routerLoad(path, config); } catch { /* fallback */ } }
     return null;
   }
 
@@ -308,21 +343,38 @@ export class NativeAccelerator {
   get graphBatchInsertAvailable(): boolean { return this._graphBatchInsert; }
   get graphCypherAvailable(): boolean { return this._graphCypher; }
 
+  /**
+   * Run fn inside a @ruvector/graph-node transaction
+   * (db.begin() -> txId, db.commit(txId) / db.rollback(txId)).
+   */
   async graphTransaction(db: any, fn: (tx: any) => void | Promise<void>): Promise<boolean> {
-    if (this._graphTx && db?.beginTransaction) {
-      const tx = db.beginTransaction();
-      try { await fn(tx); tx.commit(); return true; } catch { tx.rollback(); return false; }
+    if (this._graphTx && typeof db?.begin === 'function') {
+      const txId = await db.begin();
+      try {
+        await fn(db);
+        await db.commit(txId);
+        return true;
+      } catch {
+        try { await db.rollback(txId); } catch { /* already failed */ }
+        return false;
+      }
     }
     try { await fn(db); return true; } catch { return false; }
   }
 
-  graphBatchInsertNodes(db: any, nodes: Array<{ id: string; data: Record<string, unknown> }>): boolean {
-    if (this._graphBatchInsert && db?.batchInsert) { try { db.batchInsert(nodes); return true; } catch { /* fallback */ } }
+  /** db.batchInsert() (async in @ruvector/graph-node) */
+  async graphBatchInsertNodes(db: any, batch: unknown): Promise<boolean> {
+    if (this._graphBatchInsert && typeof db?.batchInsert === 'function') {
+      try { await db.batchInsert(batch); return true; } catch { /* fallback */ }
+    }
     return false;
   }
 
-  graphCypherQuery(db: any, query: string, params?: Record<string, unknown>): any[] | null {
-    if (this._graphCypher && db?.cypher) { try { return db.cypher(query, params); } catch { /* fallback */ } }
+  /** Cypher via db.query() (async in @ruvector/graph-node; it takes no params) */
+  async graphCypherQuery(db: any, query: string): Promise<any | null> {
+    if (this._graphCypher && typeof db?.query === 'function') {
+      try { return await db.query(query); } catch { /* fallback */ }
+    }
     return null;
   }
 
@@ -330,8 +382,21 @@ export class NativeAccelerator {
 
   get coreBatchInsertAvailable(): boolean { return this._coreBatchInsert; }
 
-  coreBatchInsert(vectorDb: any, items: Array<{ id: string; vector: Float32Array; metadata?: Record<string, unknown> }>): boolean {
-    if (this._coreBatchInsert && vectorDb?.batchInsert) { try { vectorDb.batchInsert(items); return true; } catch { /* fallback */ } }
+  /** VectorDb.insertBatch() (async in @ruvector/core; metadata is a JSON string there) */
+  async coreBatchInsert(
+    vectorDb: any,
+    items: Array<{ id: string; vector: Float32Array; metadata?: Record<string, unknown> }>
+  ): Promise<boolean> {
+    if (this._coreBatchInsert && typeof vectorDb?.insertBatch === 'function') {
+      try {
+        await vectorDb.insertBatch(items.map((item) => ({
+          id: item.id,
+          vector: item.vector,
+          metadata: item.metadata ? JSON.stringify(item.metadata) : undefined,
+        })));
+        return true;
+      } catch { /* fallback */ }
+    }
     return false;
   }
 
@@ -382,6 +447,29 @@ export class NativeAccelerator {
     };
   }
 
+  /**
+   * Which native features actually loaded, by name. Unlike getStats(), this
+   * covers every optional package probed in initialize().
+   */
+  capabilities(): Record<string, boolean> {
+    return {
+      simd: this._simd !== null,
+      wasmVerify: this._witnessVerify !== null,
+      wasmStore: this._wasmStore.available,
+      wasmQuantization: this._sqLoad !== null,
+      nativeInfoNce: this._infoNceLoss !== null,
+      nativeAdamW: this._adamWOptimizer !== null,
+      nativeTensorCompress: this._tensorCompress !== null,
+      routerPersist: this._routerSave !== null && this._routerLoad !== null,
+      sonaExtended: this._sonaFlush || this._sonaContext || this._sonaBaseLora,
+      graphTx: this._graphTx,
+      graphBatchInsert: this._graphBatchInsert,
+      graphCypher: this._graphCypher,
+      coreBatchInsert: this._coreBatchInsert,
+      ewcManager: this._ewcManager !== null,
+    };
+  }
+
   // ─── Loaders ───
 
   private async loadSimd(): Promise<void> {
@@ -421,16 +509,26 @@ export class NativeAccelerator {
   private async loadNativeTensorCompress(): Promise<void> {
     try {
       const gnnMod: any = await import('@ruvector/gnn');
-      if (gnnMod.TensorCompress?.compress) this._tensorCompress = gnnMod.TensorCompress;
+      // compress/decompress are instance methods. Use the raw binding: the
+      // JS TensorCompress wrapper passes a Float32Array where the native
+      // method requires a plain array, so every call through it throws.
+      const Ctor = gnnMod.NativeTensorCompress ?? gnnMod.default?.NativeTensorCompress;
+      if (typeof Ctor?.prototype?.compressWithLevel === 'function') this._tensorCompress = new Ctor();
     } catch { /* not available */ }
   }
 
   private async loadRouterPersistence(): Promise<void> {
     try {
       const router: any = await import('@ruvector/router');
-      if (router.SemanticRouter?.prototype?.save) {
+      const SemanticRouter = router.SemanticRouter ?? router.default?.SemanticRouter;
+      // save() and load() are both instance methods
+      if (typeof SemanticRouter?.prototype?.save === 'function' && typeof SemanticRouter.prototype.load === 'function') {
         this._routerSave = async (r: any, p: string) => r.save(p);
-        this._routerLoad = async (p: string) => router.SemanticRouter.load(p);
+        this._routerLoad = async (p: string, config: { dimension: number }) => {
+          const r = new SemanticRouter(config);
+          await r.load(p);
+          return r;
+        };
       }
     } catch { /* not available */ }
   }
@@ -447,14 +545,19 @@ export class NativeAccelerator {
   private async loadGraphCapabilities(): Promise<void> {
     try {
       const graphMod: any = await import('@ruvector/graph-node');
-      if (graphMod.GraphDatabase?.prototype?.beginTransaction) this._graphTx = true;
-      if (graphMod.GraphDatabase?.prototype?.batchInsert) this._graphBatchInsert = true;
-      if (graphMod.GraphDatabase?.prototype?.cypher) this._graphCypher = true;
+      const proto = (graphMod.GraphDatabase ?? graphMod.default?.GraphDatabase)?.prototype;
+      if (typeof proto?.begin === 'function' && typeof proto.commit === 'function') this._graphTx = true;
+      if (typeof proto?.batchInsert === 'function') this._graphBatchInsert = true;
+      if (typeof proto?.query === 'function') this._graphCypher = true;
     } catch { /* not available */ }
   }
 
   private async loadCoreBatch(): Promise<void> {
-    try { const coreMod: any = await import('@ruvector/core'); if (coreMod.VectorDb?.prototype?.batchInsert) this._coreBatchInsert = true; } catch { /* not available */ }
+    try {
+      const coreMod: any = await import('@ruvector/core');
+      const VectorDb = coreMod.VectorDb ?? coreMod.default?.VectorDb;
+      if (typeof VectorDb?.prototype?.insertBatch === 'function') this._coreBatchInsert = true;
+    } catch { /* not available */ }
   }
 
   private async loadEwcManager(): Promise<void> {

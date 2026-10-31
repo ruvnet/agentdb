@@ -280,7 +280,7 @@ export class BatchOperations {
    *   ['session_id', 'task', 'reward'],
    *   { chunkSize: 1000, maxConcurrency: 5 }
    * );
-   * console.log(`Inserted ${result.totalInserted} rows in ${result.duration}ms`);
+   * console.error(`Inserted ${result.totalInserted} rows in ${result.duration}ms`);
    * ```
    *
    * @param table - Table name (validated against whitelist)
@@ -723,7 +723,7 @@ export class BatchOperations {
    * Vacuum and optimize database
    */
   optimize(): void {
-    console.log('🔧 Optimizing database...');
+    console.error('🔧 Optimizing database...');
 
     // Analyze tables for query planner
     this.db.exec('ANALYZE');
@@ -747,7 +747,7 @@ export class BatchOperations {
     // Vacuum to reclaim space
     this.db.exec('VACUUM');
 
-    console.log('✅ Database optimized');
+    console.error('✅ Database optimized');
   }
 
   /**

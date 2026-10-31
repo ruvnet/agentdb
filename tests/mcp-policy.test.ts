@@ -6,9 +6,20 @@ import {
 } from '../src/security/mcp-policy.js';
 
 describe('AgentDB MCP capability policy', () => {
-  it('preserves compatibility when unconfigured', () => {
+  it('defaults to the learning profile when unconfigured', () => {
     const policy = buildMcpToolPolicy({});
     expect(policy.configured).toBe(false);
+    expect(policy.profile).toBe('learning');
+    expect(isMcpToolAllowed('reflexion_store', policy)).toBe(true);
+    expect(isMcpToolAllowed('agentdb_search', policy)).toBe(true);
+    for (const tool of ['agentdb_init', 'agentdb_delete', 'agentdb_delete_batch', 'agentdb_clear_cache']) {
+      expect(isMcpToolAllowed(tool, policy)).toBe(false);
+    }
+  });
+
+  it('grants destructive tools to the admin profile', () => {
+    const policy = buildMcpToolPolicy({ AGENTDB_MCP_PROFILE: 'admin' });
+    expect(isMcpToolAllowed('agentdb_init', policy)).toBe(true);
     expect(isMcpToolAllowed('agentdb_delete', policy)).toBe(true);
   });
 

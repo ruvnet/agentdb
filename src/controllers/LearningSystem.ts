@@ -174,7 +174,7 @@ export class LearningSystem {
     // Cache in memory
     this.activeSessions.set(sessionId, session);
 
-    console.log(`✅ Learning session started: ${sessionId} (${sessionType})`);
+    console.error(`✅ Learning session started: ${sessionId} (${sessionType})`);
     return sessionId;
   }
 
@@ -211,7 +211,7 @@ export class LearningSystem {
     // Remove from active sessions
     this.activeSessions.delete(sessionId);
 
-    console.log(`✅ Learning session ended: ${sessionId} (duration: ${endTime - session.startTime}ms)`);
+    console.error(`✅ Learning session ended: ${sessionId} (duration: ${endTime - session.startTime}ms)`);
   }
 
   /**
@@ -299,7 +299,7 @@ export class LearningSystem {
     // Update policy incrementally based on algorithm
     await this.updatePolicyIncremental(session, feedback);
 
-    console.log(`✅ Feedback recorded: session=${feedback.sessionId}, action=${feedback.action}, reward=${feedback.reward}`);
+    console.error(`✅ Feedback recorded: session=${feedback.sessionId}, action=${feedback.action}, reward=${feedback.reward}`);
   }
 
   /**
@@ -317,7 +317,7 @@ export class LearningSystem {
       throw new Error(`Session not found: ${sessionId}`);
     }
 
-    const startTime = Date.now();
+    const startTime = performance.now();
 
     // Get all experiences for this session
     const experiences = this.db.prepare(`
@@ -334,6 +334,9 @@ export class LearningSystem {
     let totalReward = 0;
     let batchCount = 0;
 
+    // One policy object accumulates every batch update and is saved at the end
+    const policy = this.getLatestPolicy(sessionId);
+
     // Training loop
     for (let epoch = 0; epoch < epochs; epoch++) {
       // Shuffle experiences
@@ -344,7 +347,7 @@ export class LearningSystem {
         const batch = shuffled.slice(i, i + batchSize);
 
         // Calculate loss and update policy
-        const batchLoss = await this.trainBatch(session, batch, learningRate);
+        const batchLoss = await this.trainBatch(session, batch, learningRate, policy);
         totalLoss += batchLoss;
         batchCount++;
 
@@ -354,21 +357,22 @@ export class LearningSystem {
 
       // Log progress
       if ((epoch + 1) % 10 === 0) {
-        console.log(`  Epoch ${epoch + 1}/${epochs} - Loss: ${(totalLoss / batchCount).toFixed(4)}`);
+        console.error(`  Epoch ${epoch + 1}/${epochs} - Loss: ${(totalLoss / batchCount).toFixed(4)}`);
       }
     }
 
-    const trainingTimeMs = Date.now() - startTime;
+    // performance.now(): a small session trains in under 1 ms, which Date.now() reports as 0
+    const trainingTimeMs = performance.now() - startTime;
     const avgReward = totalReward / (experiences.length * epochs);
     const finalLoss = totalLoss / batchCount;
 
     // Save trained policy
-    await this.savePolicy(sessionId);
+    await this.savePolicy(sessionId, policy);
 
     // Calculate convergence rate
     const convergenceRate = this.calculateConvergenceRate(sessionId);
 
-    console.log(`✅ Training completed: ${epochs} epochs, ${trainingTimeMs}ms`);
+    console.error(`✅ Training completed: ${epochs} epochs, ${trainingTimeMs}ms`);
 
     return {
       epochsCompleted: epochs,
@@ -585,6 +589,9 @@ export class LearningSystem {
         const n = policy.visitCounts[key];
         policy.avgRewards[key] += (feedback.reward - policy.avgRewards[key]) / n;
     }
+
+    // getLatestPolicy() returns a fresh copy, so the update is lost unless written back
+    this.persistPolicy(feedback.sessionId, policy);
   }
 
   /**
@@ -593,10 +600,10 @@ export class LearningSystem {
   private async trainBatch(
     session: LearningSession,
     batch: any[],
-    learningRate: number
+    learningRate: number,
+    policy: any
   ): Promise<number> {
     let totalLoss = 0;
-    const policy = this.getLatestPolicy(session.id);
 
     for (const exp of batch) {
       const key = `${exp.state}|${exp.action}`;
@@ -633,8 +640,7 @@ export class LearningSystem {
   /**
    * Save policy to database
    */
-  private async savePolicy(sessionId: string): Promise<void> {
-    const policy = this.getLatestPolicy(sessionId);
+  private async savePolicy(sessionId: string, policy: any = this.getLatestPolicy(sessionId)): Promise<void> {
 
     const currentVersion = this.db.prepare(`
       SELECT MAX(version) as max_version FROM learning_policies
@@ -654,6 +660,46 @@ export class LearningSystem {
       JSON.stringify(policy.visitCounts || {}),
       JSON.stringify(policy.avgRewards || {}),
       version
+    );
+  }
+
+  /**
+   * Write an incrementally updated policy into the session's latest version
+   * (creating version 1 if none exists), so feedback does not add a row each time.
+   */
+  private persistPolicy(sessionId: string, policy: any): void {
+    const latest = this.db.prepare(`
+      SELECT id FROM learning_policies
+      WHERE session_id = ?
+      ORDER BY version DESC
+      LIMIT 1
+    `).get(sessionId) as { id: number } | undefined;
+
+    if (!latest) {
+      this.db.prepare(`
+        INSERT INTO learning_policies (
+          session_id, state_action_pairs, q_values, visit_counts, avg_rewards, version
+        ) VALUES (?, ?, ?, ?, ?, 1)
+      `).run(
+        sessionId,
+        JSON.stringify(policy.stateActionPairs || {}),
+        JSON.stringify(policy.qValues || {}),
+        JSON.stringify(policy.visitCounts || {}),
+        JSON.stringify(policy.avgRewards || {})
+      );
+      return;
+    }
+
+    this.db.prepare(`
+      UPDATE learning_policies
+      SET state_action_pairs = ?, q_values = ?, visit_counts = ?, avg_rewards = ?
+      WHERE id = ?
+    `).run(
+      JSON.stringify(policy.stateActionPairs || {}),
+      JSON.stringify(policy.qValues || {}),
+      JSON.stringify(policy.visitCounts || {}),
+      JSON.stringify(policy.avgRewards || {}),
+      latest.id
     );
   }
 
@@ -1176,7 +1222,7 @@ export class LearningSystem {
       })
     );
 
-    console.log(`✅ Experience recorded: tool=${toolName}, reward=${reward}, success=${success}`);
+    console.error(`✅ Experience recorded: tool=${toolName}, reward=${reward}, success=${success}`);
     return result.lastInsertRowid as number;
   }
 

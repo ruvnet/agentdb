@@ -327,7 +327,7 @@ export class SemanticQueryRouter {
         const accel = new N();
         await accel.initialize();
         if (accel.routerPersistAvailable) {
-          const loaded = await accel.routerLoad(path);
+          const loaded = await accel.routerLoad(path, { dimension: this.dim });
           if (loaded) { this.router = loaded; return true; }
         }
       } catch { /* fall through to JSON */ }

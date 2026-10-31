@@ -10,6 +10,7 @@
  */
 
 import { createDatabase } from '../db-fallback.js';
+import { randomBytes } from 'crypto';
 import { parseJsonStrict } from '../security/input-validation.js';
 import { CausalMemoryGraph } from '../controllers/CausalMemoryGraph.js';
 import { CausalRecall } from '../controllers/CausalRecall.js';
@@ -816,6 +817,7 @@ class AgentDBCLI {
   // ============================================================================
 
   async quicStartServer(params: {
+    host?: string;
     port?: number;
     cert?: string;
     key?: string;
@@ -827,15 +829,17 @@ class AgentDBCLI {
     log.header('\n[QUIC] Starting QUIC Sync Server');
 
     const spinner = new Spinner();
+    const host = params.host || '127.0.0.1';
     const port = params.port || 4433;
-    const authToken = params.authToken || this.generateAuthToken();
+    const authToken = params.authToken || process.env.AGENTDB_QUIC_AUTH_TOKEN || this.generateAuthToken();
+    const tokenGenerated = !params.authToken && !process.env.AGENTDB_QUIC_AUTH_TOKEN;
 
     console.log('\n' + '='.repeat(80));
     console.log(`${colors.bright}Server Configuration${colors.reset}`);
     console.log('='.repeat(80));
-    console.log(`  Host: ${colors.cyan}0.0.0.0${colors.reset}`);
+    console.log(`  Host: ${colors.cyan}${host}${colors.reset}`);
     console.log(`  Port: ${colors.cyan}${port}${colors.reset}`);
-    console.log(`  Auth Token: ${colors.cyan}${authToken.substring(0, 8)}...${colors.reset}`);
+    console.log(`  Auth Token: ${colors.cyan}${tokenGenerated ? 'generated (not shown)' : 'configured'}${colors.reset}`);
     console.log(`  Max Connections: ${colors.cyan}${params.maxConnections || 100}${colors.reset}`);
 
     if (params.cert && params.key) {
@@ -851,7 +855,7 @@ class AgentDBCLI {
 
       // Create QUIC server configuration
       const serverConfig: QUICServerConfig = {
-        host: '0.0.0.0',
+        host,
         port,
         maxConnections: params.maxConnections || 100,
         authToken,
@@ -884,7 +888,11 @@ class AgentDBCLI {
       console.log('-'.repeat(80));
 
       log.info('\nServer is ready to accept connections.');
-      log.info(`Clients can connect using: agentdb sync connect <host> ${port} --auth-token ${authToken}`);
+      // Never print the token: it would end up in terminal scrollback and logs
+      log.info(`Clients can connect using: agentdb sync connect <host> ${port} --auth-token <token>`);
+      if (tokenGenerated) {
+        log.warning('No --auth-token or AGENTDB_QUIC_AUTH_TOKEN was given; a random token was generated and is not displayed. Set one to share it with clients.');
+      }
       log.info('\nPress Ctrl+C to stop the server');
 
       // Handle graceful shutdown
@@ -1586,10 +1594,8 @@ class AgentDBCLI {
   }
 
   private generateAuthToken(): string {
-    // Generate a random 32-character token
-    return Array.from({ length: 32 }, () =>
-      Math.floor(Math.random() * 16).toString(16)
-    ).join('');
+    // 256 bits from the CSPRNG (Math.random is predictable)
+    return randomBytes(32).toString('hex');
   }
 
   private getPendingChanges(incremental?: boolean, filter?: string): {
@@ -2342,6 +2348,7 @@ async function handleDbCommands(cli: AgentDBCLI, subcommand: string, args: strin
 async function handleSyncCommands(cli: AgentDBCLI, subcommand: string, args: string[]) {
   if (subcommand === 'start-server') {
     // Parse options
+    let host: string | undefined;
     let port: number | undefined;
     let cert: string | undefined;
     let key: string | undefined;
@@ -2349,7 +2356,9 @@ async function handleSyncCommands(cli: AgentDBCLI, subcommand: string, args: str
     let maxConnections: number | undefined;
 
     for (let i = 0; i < args.length; i++) {
-      if (args[i] === '--port' && i + 1 < args.length) {
+      if (args[i] === '--host' && i + 1 < args.length) {
+        host = args[++i];
+      } else if (args[i] === '--port' && i + 1 < args.length) {
         port = parseInt(args[++i]);
       } else if (args[i] === '--cert' && i + 1 < args.length) {
         cert = args[++i];
@@ -2362,7 +2371,7 @@ async function handleSyncCommands(cli: AgentDBCLI, subcommand: string, args: str
       }
     }
 
-    await cli.quicStartServer({ port, cert, key, authToken, maxConnections });
+    await cli.quicStartServer({ host, port, cert, key, authToken, maxConnections });
   } else if (subcommand === 'connect') {
     // Parse host and port
     const host = args[0];
@@ -3219,13 +3228,15 @@ ${colors.bright}MCP COMMANDS:${colors.reset}
     Start the MCP server for Claude Desktop integration
 
 ${colors.bright}QUIC SYNC COMMANDS:${colors.reset}
-  agentdb sync start-server [--port 4433] [--cert <path>] [--key <path>] [--auth-token <token>]
+  agentdb sync start-server [--host 127.0.0.1] [--port 4433] [--cert <path>] [--key <path>] [--auth-token <token>]
     Start a QUIC synchronization server for multi-agent coordination
     Options:
+      --host <addr>        Bind address (default: 127.0.0.1; use 0.0.0.0 to expose)
       --port <n>           Server port (default: 4433)
       --cert <path>        TLS certificate file path
       --key <path>         TLS key file path
-      --auth-token <token> Authentication token (auto-generated if not provided)
+      --auth-token <token> Authentication token (or AGENTDB_QUIC_AUTH_TOKEN; a random,
+                           undisplayed token is generated if neither is set)
     Example: agentdb sync start-server --port 4433 --cert ./cert.pem --key ./key.pem
 
   agentdb sync connect <host> <port> [--auth-token <token>] [--cert <path>]

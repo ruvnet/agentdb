@@ -316,6 +316,8 @@ function createSqlJsWrapper(SQL: any) {
           console.warn(`⚠️  Detected ${this.activeStatements.size} active SQL statements - possible memory leak`);
         }
       }, 10000);
+      // Diagnostic only: must not keep a process alive that never calls close()
+      this.intervalId.unref?.();
     }
 
     prepare(sql: string) {
@@ -326,10 +328,24 @@ function createSqlJsWrapper(SQL: any) {
       const cached = this.statementCache.get(sql);
       if (cached) return cached;
 
-      const stmt = this.db.prepare(sql);
+      let stmt = this.db.prepare(sql);
       let isFinalized = false;
       const stmtId = ++this.statementCounter;
       const self = this;
+      // sql.js frees every prepared statement on export() (save(), or another
+      // wrapper of the same database), after which bind() throws the string
+      // "Statement closed". Re-prepare once instead of failing the call.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- sql.js bind accepts heterogeneous params
+      const bindLive = (params: any[]) => {
+        try {
+          stmt.bind(params);
+        } catch (error) {
+          if (error !== SQLJS_STATEMENT_CLOSED) throw error;
+          stmt = self.db.prepare(sql);
+          self.activeStatements.set(stmtId, stmt);
+          stmt.bind(params);
+        }
+      };
 
       // Track active statement
       this.activeStatements.set(stmtId, stmt);
@@ -348,7 +364,7 @@ function createSqlJsWrapper(SQL: any) {
         run: (...params: any[]) => {
           if (isFinalized) throw new Error('Statement already finalized');
           try {
-            stmt.bind(params);
+            bindLive(params);
             stmt.step();
             stmt.reset();
 
@@ -366,7 +382,7 @@ function createSqlJsWrapper(SQL: any) {
         get: (...params: any[]) => {
           if (isFinalized) throw new Error('Statement already finalized');
           try {
-            stmt.bind(params);
+            bindLive(params);
             const hasRow = stmt.step();
 
             if (!hasRow) {
@@ -394,17 +410,19 @@ function createSqlJsWrapper(SQL: any) {
         all: (...params: any[]) => {
           if (isFinalized) throw new Error('Statement already finalized');
           try {
-            stmt.bind(params);
+            bindLive(params);
             const results: Record<string, unknown>[] = [];
+            // Column names are fixed for one execution; read them once, not per row
+            let columns: string[] | null = null;
 
             while (stmt.step()) {
-              const columns = stmt.getColumnNames();
+              if (!columns) columns = stmt.getColumnNames() as string[];
               const values = stmt.get();
 
               const result: Record<string, unknown> = {};
-              columns.forEach((col: string, idx: number) => {
-                result[col] = values[idx];
-              });
+              for (let idx = 0; idx < columns.length; idx++) {
+                result[columns[idx]] = values[idx];
+              }
 
               results.push(result);
             }
@@ -479,9 +497,7 @@ function createSqlJsWrapper(SQL: any) {
         // SECURITY: Validate PRAGMA command against whitelist to prevent SQL injection
         const validatedPragma = validatePragmaCommand(pragma);
 
-        // Execute validated PRAGMA
-        const result = this.db.exec(`PRAGMA ${validatedPragma}`);
-        return result[0]?.values[0]?.[0];
+        return runPragma(this.db, validatedPragma);
       } catch (error) {
         if (error instanceof ValidationError) {
           console.error(`❌ Invalid PRAGMA command: ${error.message}`);
@@ -507,6 +523,29 @@ function createSqlJsWrapper(SQL: any) {
       };
     }
   };
+}
+
+/** What sql.js throws (a string, not an Error) when using a freed statement */
+export const SQLJS_STATEMENT_CLOSED = 'Statement closed';
+
+/**
+ * Run one validated PRAGMA as a single prepared statement (exec() would run
+ * any stacked statements). table_info(...) returns its rows, like
+ * better-sqlite3; other pragmas return the first value.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- sql.js raw database
+function runPragma(rawDb: any, validatedPragma: string): unknown {
+  const stmt = rawDb.prepare(`PRAGMA ${validatedPragma}`);
+  try {
+    if (/^table_info\(/i.test(validatedPragma)) {
+      const rows: Record<string, unknown>[] = [];
+      while (stmt.step()) rows.push(stmt.getAsObject());
+      return rows;
+    }
+    return stmt.step() ? stmt.get()[0] : undefined;
+  } finally {
+    stmt.free();
+  }
 }
 
 /**
@@ -548,10 +587,22 @@ export function wrapExistingSqlJsDatabase(rawDb: any, filename: string = ':memor
       const cached = statementCache.get(sql);
       if (cached) return cached;
 
-      const stmt = rawDb.prepare(sql);
+      let stmt = rawDb.prepare(sql);
       let isFinalized = false;
       const stmtId = ++statementCounter;
       activeStatements.set(stmtId, stmt);
+      // See SqlJsDatabase.prepare: re-prepare after sql.js freed the statement
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- sql.js bind accepts heterogeneous params
+      const bindLive = (params: any[]) => {
+        try {
+          stmt.bind(params);
+        } catch (error) {
+          if (error !== SQLJS_STATEMENT_CLOSED) throw error;
+          stmt = rawDb.prepare(sql);
+          activeStatements.set(stmtId, stmt);
+          stmt.bind(params);
+        }
+      };
 
       const evictOnError = () => {
         if (!isFinalized) {
@@ -567,7 +618,7 @@ export function wrapExistingSqlJsDatabase(rawDb: any, filename: string = ':memor
         run(...params: any[]) {
           if (isFinalized) throw new Error('Statement already finalized');
           try {
-            stmt.bind(params);
+            bindLive(params);
             stmt.step();
             stmt.reset();
             return {
@@ -583,7 +634,7 @@ export function wrapExistingSqlJsDatabase(rawDb: any, filename: string = ':memor
         get(...params: any[]) {
           if (isFinalized) throw new Error('Statement already finalized');
           try {
-            stmt.bind(params);
+            bindLive(params);
             const hasRow = stmt.step();
             if (!hasRow) { stmt.reset(); return undefined; }
             const columns = stmt.getColumnNames();
@@ -601,13 +652,15 @@ export function wrapExistingSqlJsDatabase(rawDb: any, filename: string = ':memor
         all(...params: any[]) {
           if (isFinalized) throw new Error('Statement already finalized');
           try {
-            stmt.bind(params);
+            bindLive(params);
             const results: Record<string, unknown>[] = [];
+            // Column names are fixed for one execution; read them once, not per row
+            let columns: string[] | null = null;
             while (stmt.step()) {
-              const columns = stmt.getColumnNames();
+              if (!columns) columns = stmt.getColumnNames() as string[];
               const values = stmt.get();
               const result: Record<string, unknown> = {};
-              columns.forEach((col: string, idx: number) => { result[col] = values[idx]; });
+              for (let idx = 0; idx < columns.length; idx++) result[columns[idx]] = values[idx];
               results.push(result);
             }
             stmt.reset();
@@ -656,8 +709,7 @@ export function wrapExistingSqlJsDatabase(rawDb: any, filename: string = ':memor
     pragma(pragma: string, _options?: unknown) {
       try {
         const validatedPragma = validatePragmaCommand(pragma);
-        const result = rawDb.exec(`PRAGMA ${validatedPragma}`);
-        return result[0]?.values[0]?.[0];
+        return runPragma(rawDb, validatedPragma);
       } catch (error) {
         if (error instanceof ValidationError) {
           console.error(`Invalid PRAGMA command: ${error.message}`);

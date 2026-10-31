@@ -99,7 +99,7 @@ export class NightlyLearner {
    * Main learning job - runs all discovery and consolidation tasks
    */
   async run(): Promise<LearnerReport> {
-    console.log('\n🌙 Nightly Learner Starting...\n');
+    console.error('\n🌙 Nightly Learner Starting...\n');
     const startTime = Date.now();
 
     const report: LearnerReport = {
@@ -116,27 +116,27 @@ export class NightlyLearner {
 
     try {
       // Step 1: Discover new causal edges
-      console.log('📊 Discovering causal edges from episode patterns...');
+      console.error('📊 Discovering causal edges from episode patterns...');
       report.edgesDiscovered = await this.discoverCausalEdges();
-      console.log(`   ✓ Discovered ${report.edgesDiscovered} new edges\n`);
+      console.error(`   ✓ Discovered ${report.edgesDiscovered} new edges\n`);
 
       // Step 2: Complete running experiments
-      console.log('🧪 Completing A/B experiments...');
+      console.error('🧪 Completing A/B experiments...');
       report.experimentsCompleted = await this.completeExperiments();
-      console.log(`   ✓ Completed ${report.experimentsCompleted} experiments\n`);
+      console.error(`   ✓ Completed ${report.experimentsCompleted} experiments\n`);
 
       // Step 3: Create new experiments (if enabled)
       if (this.config.autoExperiments) {
-        console.log('🔬 Creating new A/B experiments...');
+        console.error('🔬 Creating new A/B experiments...');
         report.experimentsCreated = await this.createExperiments();
-        console.log(`   ✓ Created ${report.experimentsCreated} new experiments\n`);
+        console.error(`   ✓ Created ${report.experimentsCreated} new experiments\n`);
       }
 
       // Step 4: Prune low-confidence edges
       if (this.config.pruneOldEdges) {
-        console.log('🧹 Pruning low-confidence edges...');
+        console.error('🧹 Pruning low-confidence edges...');
         report.edgesPruned = await this.pruneEdges();
-        console.log(`   ✓ Pruned ${report.edgesPruned} edges\n`);
+        console.error(`   ✓ Pruned ${report.edgesPruned} edges\n`);
       }
 
       // Step 5: Calculate statistics
@@ -149,7 +149,7 @@ export class NightlyLearner {
 
       report.executionTimeMs = Date.now() - startTime;
 
-      console.log('✅ Nightly Learner Completed\n');
+      console.error('✅ Nightly Learner Completed\n');
       this.printReport(report);
 
       return report;
@@ -632,27 +632,27 @@ export class NightlyLearner {
    * Print report to console
    */
   private printReport(report: LearnerReport): void {
-    console.log('═══════════════════════════════════════════════════════════');
-    console.log('  Nightly Learner Report');
-    console.log('═══════════════════════════════════════════════════════════\n');
-    console.log(`  Execution Time: ${report.executionTimeMs}ms`);
-    console.log(`  Timestamp: ${new Date(report.timestamp).toISOString()}\n`);
-    console.log('  Results:');
-    console.log(`    • Edges Discovered: ${report.edgesDiscovered}`);
-    console.log(`    • Edges Pruned: ${report.edgesPruned}`);
-    console.log(`    • Experiments Completed: ${report.experimentsCompleted}`);
-    console.log(`    • Experiments Created: ${report.experimentsCreated}\n`);
-    console.log('  Statistics:');
-    console.log(`    • Avg Uplift: ${report.avgUplift.toFixed(3)}`);
-    console.log(`    • Avg Confidence: ${report.avgConfidence.toFixed(3)}\n`);
+    console.error('═══════════════════════════════════════════════════════════');
+    console.error('  Nightly Learner Report');
+    console.error('═══════════════════════════════════════════════════════════\n');
+    console.error(`  Execution Time: ${report.executionTimeMs}ms`);
+    console.error(`  Timestamp: ${new Date(report.timestamp).toISOString()}\n`);
+    console.error('  Results:');
+    console.error(`    • Edges Discovered: ${report.edgesDiscovered}`);
+    console.error(`    • Edges Pruned: ${report.edgesPruned}`);
+    console.error(`    • Experiments Completed: ${report.experimentsCompleted}`);
+    console.error(`    • Experiments Created: ${report.experimentsCreated}\n`);
+    console.error('  Statistics:');
+    console.error(`    • Avg Uplift: ${report.avgUplift.toFixed(3)}`);
+    console.error(`    • Avg Confidence: ${report.avgConfidence.toFixed(3)}\n`);
 
     if (report.recommendations.length > 0) {
-      console.log('  Recommendations:');
-      report.recommendations.forEach(rec => console.log(`    • ${rec}`));
-      console.log('');
+      console.error('  Recommendations:');
+      report.recommendations.forEach(rec => console.error(`    • ${rec}`));
+      console.error('');
     }
 
-    console.log('═══════════════════════════════════════════════════════════\n');
+    console.error('═══════════════════════════════════════════════════════════\n');
   }
 
   /**

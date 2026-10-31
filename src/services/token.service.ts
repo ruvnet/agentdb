@@ -87,7 +87,7 @@ function getJWTSecret(): string {
   if (!secret) {
     throw new Error(
       'JWT_SECRET environment variable is not set. ' +
-      'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(64).toString(\'base64\'))"'
+      'Generate one with: node -e "console.error(require(\'crypto\').randomBytes(64).toString(\'base64\'))"'
     );
   }
 
@@ -300,7 +300,7 @@ export function revokeToken(token: string): void {
   // In production, use Redis with TTL instead
   setTimeout(() => {
     revokedTokens.delete(token);
-  }, 7 * 24 * 60 * 60 * 1000); // 7 days
+  }, 7 * 24 * 60 * 60 * 1000).unref?.(); // 7 days; cleanup must not hold the process open
 }
 
 /**
@@ -327,7 +327,7 @@ export function registerTokenWithSession(token: string, sessionId: string): void
     if (sessionTokens.get(sessionId)?.size === 0) {
       sessionTokens.delete(sessionId);
     }
-  }, Math.max(expiresIn, 0));
+  }, Math.max(expiresIn, 0)).unref?.();
 }
 
 /**

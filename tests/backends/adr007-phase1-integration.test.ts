@@ -578,9 +578,9 @@ describe('ADR-007 Phase 1: Graph + Core Batch + EWC APIs', () => {
   });
 
   describe('Core Batch Insert fallback', () => {
-    it('should return false without native support', () => {
+    it('should return false without native support', async () => {
       const mockDb = {};
-      expect(accel.coreBatchInsert(mockDb, [
+      expect(await accel.coreBatchInsert(mockDb, [
         { id: '1', vector: randomVec(4) },
         { id: '2', vector: randomVec(4) },
       ])).toBe(false);
