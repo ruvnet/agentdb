@@ -62,6 +62,11 @@ export interface LLMConfig {
   embeddingDim?: number;
   /** RuvLLM-specific: enable adaptive learning */
   learningEnabled?: boolean;
+  /**
+   * Optional .env file to read API keys from. Nothing is loaded implicitly;
+   * variables already set in process.env win.
+   */
+  envFile?: string;
 }
 
 export interface LLMResponse {
@@ -74,11 +79,11 @@ export interface LLMResponse {
 }
 
 export class LLMRouter {
-  private config: Required<LLMConfig>;
+  private config: Required<Omit<LLMConfig, 'envFile'>>;
   private envLoaded: boolean = false;
 
   constructor(config: LLMConfig = {}) {
-    this.loadEnv();
+    if (config.envFile) this.loadEnv(config.envFile);
 
     this.config = {
       provider: config.provider || this.selectDefaultProvider(),
@@ -93,42 +98,25 @@ export class LLMRouter {
   }
 
   /**
-   * Load environment variables from root .env file
+   * Load variables from an explicitly configured .env file into process.env
+   * (existing values are kept). There is no implicit lookup: reading
+   * <cwd>/.env, <cwd>/../../.env or a hardcoded workspace path would let any
+   * directory the process runs in inject API keys and endpoints.
    */
-  private loadEnv(): void {
+  private loadEnv(envFile: string): void {
     if (this.envLoaded) return;
-
-    try {
-      // Look for .env in project root
-      const possiblePaths = [
-        path.join(process.cwd(), '.env'),
-        path.join(process.cwd(), '..', '..', '.env'),
-        '/workspaces/agentic-flow/.env'
-      ];
-
-      for (const envPath of possiblePaths) {
-        if (fs.existsSync(envPath)) {
-          const envContent = fs.readFileSync(envPath, 'utf-8');
-          const lines = envContent.split('\n');
-
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed && !trimmed.startsWith('#')) {
-              const [key, ...valueParts] = trimmed.split('=');
-              const value = valueParts.join('=').trim();
-              if (key && value && !process.env[key]) {
-                process.env[key] = value;
-              }
-            }
-          }
-
-          this.envLoaded = true;
-          break;
+    const envContent = fs.readFileSync(path.resolve(envFile), 'utf-8');
+    for (const line of envContent.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith('#')) {
+        const [key, ...valueParts] = trimmed.split('=');
+        const value = valueParts.join('=').trim();
+        if (key && value && !process.env[key]) {
+          process.env[key] = value;
         }
       }
-    } catch (error) {
-      // Silent fail - environment variables may be set directly
     }
+    this.envLoaded = true;
   }
 
   /**
@@ -622,7 +610,7 @@ export class LLMRouter {
   /**
    * Get current configuration
    */
-  getConfig(): Required<LLMConfig> {
+  getConfig(): Required<Omit<LLMConfig, 'envFile'>> {
     return { ...this.config };
   }
 
