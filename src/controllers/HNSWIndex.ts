@@ -19,6 +19,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { validateFilterColumns } from '../security/input-validation.js';
 
 // Lazy-loaded hnswlib-node to avoid import failures on systems without build tools
 let HierarchicalNSW: any = null;
@@ -498,33 +499,26 @@ export class HNSWIndex {
     results: HNSWSearchResult[],
     filters: Record<string, any>
   ): HNSWSearchResult[] {
-    // Build WHERE clause for filters
-    const conditions: string[] = [];
-    const params: any[] = [];
+    const entries = Object.entries(filters);
+    if (entries.length === 0 || results.length === 0) return results;
 
-    Object.entries(filters).forEach(([key, value]) => {
-      conditions.push(`${key} = ?`);
-      params.push(value);
-    });
+    // Keys are interpolated into SQL: only real pattern_embeddings columns
+    const columns = validateFilterColumns(this.db, 'pattern_embeddings', entries.map(([key]) => key));
+    const whereClause = columns.map((column) => `${column} = ?`).join(' AND ');
+    const params = entries.map(([, value]) => value);
 
-    const whereClause = conditions.join(' AND ');
-
-    // Filter results by querying database
-    const filtered: HNSWSearchResult[] = [];
-
-    for (const result of results) {
-      const stmt = this.db.prepare(`
-        SELECT 1 FROM pattern_embeddings
-        WHERE pattern_id = ? AND ${whereClause}
-      `);
-
-      const matches = stmt.get(result.id, ...params);
-      if (matches) {
-        filtered.push(result);
-      }
+    // One query for all candidates instead of one per result
+    const matching = new Set<number>();
+    for (let i = 0; i < results.length; i += 500) {
+      const ids = results.slice(i, i + 500).map((r) => r.id);
+      const rows = this.db.prepare(`
+        SELECT pattern_id FROM pattern_embeddings
+        WHERE pattern_id IN (${ids.map(() => '?').join(',')}) AND ${whereClause}
+      `).all(...ids, ...params) as Array<{ pattern_id: number }>;
+      for (const row of rows) matching.add(Number(row.pattern_id));
     }
 
-    return filtered;
+    return results.filter((result) => matching.has(Number(result.id)));
   }
 
   /**

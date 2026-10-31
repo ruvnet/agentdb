@@ -15,6 +15,7 @@
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
 import { existsSync } from 'fs';
+import { validateFilterColumns, validateSqlIdentifier } from '../security/input-validation.js';
 
 // Database type from db-fallback
 type Database = any;
@@ -330,10 +331,15 @@ export class WASMVectorSearch {
     const conditions: string[] = [];
     const params: any[] = [];
 
+    // tableName and filter keys are interpolated into SQL: identifiers only,
+    // and keys must be real columns of the table
+    const table = validateSqlIdentifier(tableName);
     if (options?.filters) {
-      Object.entries(options.filters).forEach(([key, value]) => {
-        conditions.push(`${key} = ?`);
-        params.push(value);
+      const entries = Object.entries(options.filters);
+      const columns = validateFilterColumns(this.db, table, entries.map(([key]) => key));
+      columns.forEach((column, i) => {
+        conditions.push(`${column} = ?`);
+        params.push(entries[i][1]);
       });
     }
 
@@ -344,7 +350,7 @@ export class WASMVectorSearch {
     // Retrieve all vectors
     const stmt = this.db.prepare(`
       SELECT pattern_id as id, embedding
-      FROM ${tableName}
+      FROM ${table}
       ${whereClause}
     `);
 

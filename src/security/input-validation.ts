@@ -311,6 +311,28 @@ export function validateSqlIdentifier(name: string): string {
 }
 
 /**
+ * Validate caller-supplied filter keys as columns of `tableName`.
+ *
+ * Each key must be a plain identifier and an existing column (from
+ * PRAGMA table_info), so it can be interpolated into a WHERE clause.
+ * Returns the validated column names in input order.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- better-sqlite3 or the sql.js wrapper
+export function validateFilterColumns(db: any, tableName: string, keys: string[]): string[] {
+  const table = validateSqlIdentifier(tableName);
+  const columns = new Set(
+    (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name)
+  );
+  return keys.map((key) => {
+    const column = validateSqlIdentifier(key);
+    if (column !== key || !columns.has(column)) {
+      throw new ValidationError(`Unknown filter column: ${key}`, 'INVALID_COLUMN', 'filters');
+    }
+    return column;
+  });
+}
+
+/**
  * Validate table name against whitelist
  */
 export function validateTableName(tableName: string): string {
