@@ -7,6 +7,21 @@
   },
   "plugins": [
     {
+      "name": "agentdb",
+      "source": "./plugins/agentdb",
+      "description": "AgentDB's own standalone MCP server (npx agentdb mcp start, pinned to the plugin version) with a memory specialist agent, vector-memory, reflexion-learning and setup-diagnostics skills, /agentdb-status, and a mod that keeps secrets out of memory and refuses destructive admin tools unless enabled. Supplies the agentdb server the other agentdb-* plugins call. Distinct from ruflo-agentdb, which bridges AgentDB through ruflo's MCP server.",
+      "category": "memory",
+      "tags": [
+        "agentdb",
+        "memory",
+        "vector-search",
+        "reflexion",
+        "learning",
+        "mcp",
+        "mod"
+      ]
+    },
+    {
       "name": "agentdb-core",
       "source": "./plugins/agentdb-core",
       "description": "Foundation plugin — pattern store, search, stats. Surfaces agentdb_pattern_store, agentdb_pattern_search, agentdb_pattern_stats."

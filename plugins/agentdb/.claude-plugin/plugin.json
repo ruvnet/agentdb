@@ -1,0 +1,67 @@
+{
+  "name": "agentdb",
+  "description": "AgentDB's own standalone MCP server (npx agentdb mcp start) for Claude Code: vector memory, reflexion episodes, skills, causal edges and learning tools, plus a mod that keeps secrets out of memory and refuses destructive admin tools unless enabled. Not the ruflo-agentdb plugin, which reaches AgentDB through ruflo's MCP server; the two can be installed side by side.",
+  "version": "3.1.0",
+  "author": {
+    "name": "ruvnet",
+    "url": "https://github.com/ruvnet"
+  },
+  "homepage": "https://github.com/ruvnet/agentdb",
+  "repository": "https://github.com/ruvnet/agentdb.git",
+  "license": "MIT",
+  "keywords": [
+    "agentdb",
+    "memory",
+    "vector-search",
+    "reflexion",
+    "mcp",
+    "claude-code",
+    "mod",
+    "function-hooks"
+  ],
+  "userConfig": {
+    "mcp_profile": {
+      "type": "string",
+      "title": "MCP tool profile",
+      "description": "Sets AGENTDB_MCP_PROFILE: readonly, retrieval, learning or admin. Empty means the server default, learning (reads plus memory writes). admin also exposes agentdb_init, agentdb_delete, agentdb_delete_batch and agentdb_clear_cache; the mod still refuses those unless allow_destructive is on.",
+      "required": false,
+      "default": ""
+    },
+    "db_path": {
+      "type": "string",
+      "title": "Database path",
+      "description": "Sets AGENTDB_PATH, the database file the server opens. Empty means ./agentdb.db in the directory Claude Code starts the server from.",
+      "required": false,
+      "default": ""
+    },
+    "mcp_allow": {
+      "type": "string",
+      "title": "Extra tools to expose",
+      "description": "Sets AGENTDB_MCP_ALLOW: tool names, comma or space separated, added to the profile's list. Empty adds none.",
+      "required": false,
+      "default": ""
+    },
+    "mcp_deny": {
+      "type": "string",
+      "title": "Tools to hide",
+      "description": "Sets AGENTDB_MCP_DENY: tool names, comma or space separated, removed whatever the profile says. Empty hides none.",
+      "required": false,
+      "default": ""
+    },
+    "secret_guard": {
+      "type": "string",
+      "title": "Secret write guard",
+      "description": "enforce (default): refuse AgentDB memory writes that hold what looks like a key, token, password or private key. notify: let them through with a toast. off: no check.",
+      "required": false,
+      "default": "enforce",
+      "options": ["off", "notify", "enforce"]
+    },
+    "allow_destructive": {
+      "type": "boolean",
+      "title": "Allow destructive admin tools",
+      "description": "Off (default): the mod refuses agentdb_delete, agentdb_delete_batch, agentdb_clear_cache and agentdb_init with reset. On: lets them through (the server only exposes them under the admin profile or when named in mcp_allow).",
+      "required": false,
+      "default": false
+    }
+  }
+}

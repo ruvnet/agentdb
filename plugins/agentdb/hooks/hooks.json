@@ -1,0 +1,4 @@
+{
+  "description": "AgentDB as a mod (ADR-445 shape): a tighten-only tool.call guard on the agentdb MCP server that refuses memory writes holding secrets and the destructive admin tools unless allow_destructive is on, and /agentdb-guard (status, scan). No network, no process.",
+  "modules": ["./register.ts"]
+}
