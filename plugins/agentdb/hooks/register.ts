@@ -37,7 +37,11 @@ export const register: Register = (on, options) => {
     }
     stats.flagged++
     try {
-      $.ui.toast('agentdb mod (notify): a memory write that looks like it holds a secret went through')
+      $.ui.toast(
+        refusal.cls === 'oversize'
+          ? 'agentdb mod (notify): a memory write too large to screen for secrets went through'
+          : 'agentdb mod (notify): a memory write that looks like it holds a secret went through',
+      )
     } catch {
       /* a refused toast changes nothing */
     }
