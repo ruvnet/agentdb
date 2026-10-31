@@ -596,45 +596,54 @@ export class RuVectorBackend implements VectorBackendAsync {
    * insertAsync() to await the write and observe its errors directly.
    */
   insert(id: string, embedding: Float32Array, metadata?: Record<string, any>): void {
-    void this.insertAsync(id, embedding, metadata).catch(() => {
-      /* recorded by enqueue(); surfaced by flush() */
-    });
+    // Validation errors throw here; native write errors are recorded by
+    // enqueue() and surfaced by flush()
+    this.queueInsert(id, embedding, metadata).catch(() => {});
   }
 
   async insertAsync(id: string, embedding: Float32Array, metadata?: Record<string, any>): Promise<void> {
+    await this.queueInsert(id, embedding, metadata);
+  }
+
+  private queueInsert(id: string, embedding: Float32Array, metadata?: Record<string, any>): Promise<void> {
     this.ensureInitialized();
     const startTime = this.config.enableStats !== false ? performance.now() : 0;
     const vector = this.validateEntry(id, embedding, metadata);
     this.setMetadata(id, metadata);
     const write = this.enqueue(() => this.writeNative([{ id, vector }]));
     this.recordInsertLatency(startTime);
-    await write;
+    return write;
   }
 
   /**
    * Batch insert (queued; see insert())
    */
   insertBatch(items: Array<{ id: string; embedding: Float32Array; metadata?: Record<string, any> }>): void {
-    void this.insertBatchAsync(items).catch(() => {
-      /* recorded by enqueue(); surfaced by flush() */
-    });
+    // Validation errors throw here; see insert()
+    this.queueBatch(items).catch(() => {});
   }
 
   async insertBatchAsync(
     items: Array<{ id: string; embedding: Float32Array; metadata?: Record<string, any> }>
   ): Promise<void> {
+    await this.queueBatch(items);
+  }
+
+  private queueBatch(
+    items: Array<{ id: string; embedding: Float32Array; metadata?: Record<string, any> }>
+  ): Promise<void> {
     this.ensureInitialized();
-    if (items.length === 0) return;
     const entries: Array<{ id: string; vector: Float32Array }> = [];
     for (const item of items) {
       entries.push({ id: item.id, vector: this.validateEntry(item.id, item.embedding, item.metadata) });
     }
     for (const item of items) this.setMetadata(item.id, item.metadata);
+    const writes: Promise<void>[] = [];
     for (let i = 0; i < entries.length; i += MAX_BATCH_SIZE) {
       const chunk = entries.slice(i, i + MAX_BATCH_SIZE);
-      void this.enqueue(() => this.writeNative(chunk)).catch(() => { /* surfaced below */ });
+      writes.push(this.enqueue(() => this.writeNative(chunk)));
     }
-    await this.flush();
+    return Promise.all(writes).then(() => undefined);
   }
 
   /**
@@ -773,7 +782,7 @@ export class RuVectorBackend implements VectorBackendAsync {
   remove(id: string): boolean {
     this.ensureInitialized();
     const known = this.knownIds.has(id) || this.metadata.has(id);
-    void this.removeAsync(id).catch(() => { /* recorded by enqueue() */ });
+    this.removeAsync(id).catch(() => { /* recorded by enqueue() */ });
     return known;
   }
 

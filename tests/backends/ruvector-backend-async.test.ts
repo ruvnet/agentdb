@@ -107,6 +107,11 @@ describe('RuVectorBackend', () => {
   it('rejects the sync search() loudly instead of returning []', () => {
     expect(() => backend.search(unit(0), 1)).toThrow(/async-only/);
   });
+
+  it('sync insert() still throws on invalid input', () => {
+    expect(() => backend.insert('', unit(0))).toThrow(/non-empty string/);
+    expect(() => backend.insert('x', new Float32Array(DIM + 1))).toThrow(/dimension/);
+  });
 });
 
 describe('controllers sharing a RuVectorBackend', () => {
