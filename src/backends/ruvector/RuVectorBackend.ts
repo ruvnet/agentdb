@@ -17,7 +17,7 @@
  * - Statistics tracking for performance monitoring
  */
 
-import type { VectorBackend, VectorConfig, SearchResult, SearchOptions, VectorStats } from '../VectorBackend.js';
+import type { VectorBackendAsync, VectorConfig, SearchResult, SearchOptions, VectorStats } from '../VectorBackend.js';
 
 // ============================================================================
 // Performance & Security Constants
@@ -217,14 +217,40 @@ export interface RuVectorConfig extends VectorConfig {
   mmapPath?: string;
   /** Enable statistics tracking (default: true) */
   enableStats?: boolean;
+  /**
+   * File the native index persists to. When omitted, a private temp directory
+   * is created and removed on close(), so instances never share a file (the
+   * native binding otherwise defaults to ./ruvector.db in the cwd).
+   */
+  storagePath?: string;
 }
 
-export class RuVectorBackend implements VectorBackend {
+/** ruvector-core distance metric names */
+const NATIVE_METRIC: Record<string, string> = {
+  cosine: 'Cosine',
+  l2: 'Euclidean',
+  ip: 'DotProduct',
+};
+
+export class RuVectorBackend implements VectorBackendAsync {
   readonly name = 'ruvector' as const;
-  private db: any; // VectorDB from @ruvector/core
+  private db: any; // VectorDb from ruvector / @ruvector/core (every method is async)
   private config: RuVectorConfig;
   private metadata: Map<string, Record<string, any>> = new Map();
   private initialized = false;
+
+  // Native calls are async; they run one at a time through this queue so a
+  // sync insert followed by a remove (or a search) observes them in order.
+  private queue: Promise<void> = Promise.resolve();
+  private lastWriteError: Error | null = null;
+  private cachedCount = 0;
+  private knownIds: Set<string> = new Set();
+  private storeWasEmpty = true;
+  private storagePath = '';
+  private ownedTempDir: string | null = null;
+  private defaultEfSearch: number | undefined;
+  private VectorDbCtor: any;
+  private nativeOptions: Record<string, unknown> = {};
 
   // Concurrency control
   private semaphore: Semaphore;
@@ -295,6 +321,107 @@ export class RuVectorBackend implements VectorBackend {
   }
 
   /**
+   * Pick the native storage file: the configured path, or a fresh private
+   * temp directory that close() removes.
+   */
+  private async resolveStoragePath(): Promise<string> {
+    const pathModule = await import('path');
+    if (this.config.storagePath) {
+      validatePath(this.config.storagePath);
+      return pathModule.resolve(this.config.storagePath);
+    }
+    const fs = await import('fs');
+    const os = await import('os');
+    this.ownedTempDir = fs.mkdtempSync(pathModule.join(os.tmpdir(), 'agentdb-ruvector-'));
+    return pathModule.join(this.ownedTempDir, 'index.db');
+  }
+
+  private removeOwnedTempDir(): void {
+    if (!this.ownedTempDir) return;
+    const dir = this.ownedTempDir;
+    this.ownedTempDir = null;
+    import('fs')
+      .then((fs) => fs.rmSync(dir, { recursive: true, force: true }))
+      .catch(() => { /* best effort */ });
+  }
+
+  /**
+   * Run a native operation after every earlier one has settled.
+   * A failure is recorded (and surfaced by flush()) without breaking the queue.
+   */
+  private enqueue<T>(op: () => Promise<T>): Promise<T> {
+    const result = this.queue.then(op);
+    this.queue = result.then(
+      () => undefined,
+      (err: Error) => {
+        this.lastWriteError = err;
+        console.error(`[RuVectorBackend] native operation failed: ${err?.message ?? err}`);
+      }
+    );
+    return result;
+  }
+
+  /**
+   * Write entries to the native index with upsert semantics. ruvector-core
+   * keeps a stale HNSW node when an existing id is re-inserted, so an id that
+   * may already be stored is deleted first.
+   */
+  private async writeNative(entries: Array<{ id: string; vector: Float32Array }>): Promise<void> {
+    const latest = new Map<string, Float32Array>();
+    for (const e of entries) latest.set(e.id, e.vector);
+
+    let replaced = 0;
+    for (const id of latest.keys()) {
+      if (this.knownIds.has(id) || !this.storeWasEmpty) {
+        if (await this.db.delete(id)) replaced++;
+      }
+    }
+
+    const batch = Array.from(latest, ([id, vector]) => ({ id, vector }));
+    if (batch.length === 1) {
+      await this.db.insert(batch[0]);
+    } else {
+      await this.db.insertBatch(batch);
+    }
+    for (const { id } of batch) this.knownIds.add(id);
+    this.cachedCount += batch.length - replaced;
+  }
+
+  private async deleteNative(id: string): Promise<boolean> {
+    const removed = await this.db.delete(id);
+    this.knownIds.delete(id);
+    if (removed) this.cachedCount--;
+    return removed;
+  }
+
+  private validateEntry(id: string, embedding: Float32Array, metadata?: Record<string, any>): Float32Array {
+    if (!id || typeof id !== 'string') {
+      throw new Error('Vector ID must be a non-empty string');
+    }
+    if (!(embedding instanceof Float32Array) && !Array.isArray(embedding)) {
+      throw new Error('Embedding must be a Float32Array or array');
+    }
+    if (embedding.length !== this.config.dimension) {
+      throw new Error(`Vector dimension ${embedding.length} does not match expected ${this.config.dimension}`);
+    }
+    if (metadata && !this.metadata.has(id) && this.metadata.size >= MAX_METADATA_ENTRIES) {
+      throw new Error(`Metadata store has reached maximum capacity of ${MAX_METADATA_ENTRIES}`);
+    }
+    // Copy: callers (and insertWithPooledBuffer) may reuse the buffer before
+    // the queued native write runs.
+    return new Float32Array(embedding);
+  }
+
+  private recordInsertLatency(startTime: number): void {
+    if (this.config.enableStats === false) return;
+    const latency = performance.now() - startTime;
+    this.stats.insertCount++;
+    this.stats.insertTotalLatencyMs += latency;
+    this.stats.insertMinLatencyMs = Math.min(this.stats.insertMinLatencyMs, latency);
+    this.stats.insertMaxLatencyMs = Math.max(this.stats.insertMaxLatencyMs, latency);
+  }
+
+  /**
    * Initialize RuVector database with optional dependency handling
    */
   async initialize(): Promise<void> {
@@ -304,17 +431,19 @@ export class RuVectorBackend implements VectorBackend {
       // Try main ruvector package first (includes core, gnn, graph)
       let VectorDB;
       try {
-        const ruvector = await import('ruvector');
-        VectorDB = ruvector.VectorDB || ruvector.default?.VectorDB;
+        const ruvector: any = await import('ruvector');
+        VectorDB = ruvector.VectorDb || ruvector.VectorDB
+          || ruvector.default?.VectorDb || ruvector.default?.VectorDB;
       } catch {
-        // Fallback to @ruvector/core for backward compatibility
-        const core = await import('@ruvector/core');
-        // ESM and CommonJS both export as VectorDB (capital 'DB')
-        VectorDB = core.VectorDB || core.default?.VectorDB;
+        // Fallback to @ruvector/core. Its canonical export is VectorDb;
+        // VectorDB is only an alias in some versions.
+        const core: any = await import('@ruvector/core');
+        VectorDB = core.VectorDb || core.VectorDB
+          || core.default?.VectorDb || core.default?.VectorDB;
       }
 
       if (!VectorDB) {
-        throw new Error('Could not find VectorDB export in @ruvector/core');
+        throw new Error('Could not find VectorDb export in ruvector or @ruvector/core');
       }
 
       // Handle both 'dimension' and 'dimensions' for backward compatibility
@@ -332,19 +461,21 @@ export class RuVectorBackend implements VectorBackend {
       const efConstruction = this.config.efConstruction ?? adaptiveParams?.efConstruction ?? 200;
       const efSearch = this.config.efSearch ?? adaptiveParams?.efSearch ?? 100;
 
-      // RuVector VectorDB constructor signature
-      this.db = new VectorDB({
-        dimensions: dimensions,  // Note: config object, not positional arg
-        metric: this.config.metric,
-        maxElements: maxElements,
-        efConstruction: efConstruction,
-        m: m  // Note: lowercase 'm'
-      });
+      this.storagePath = await this.resolveStoragePath();
 
-      // Set default efSearch
-      if (this.db.setEfSearch) {
-        this.db.setEfSearch(efSearch);
-      }
+      // HNSW parameters must go under `hnswConfig`: the binding ignores
+      // top-level keys, and an omitted hnswConfig selects a flat index.
+      this.VectorDbCtor = VectorDB;
+      this.nativeOptions = {
+        dimensions,
+        distanceMetric: NATIVE_METRIC[this.config.metric] ?? NATIVE_METRIC.cosine,
+        hnswConfig: { m, efConstruction, efSearch, maxElements },
+      };
+      this.db = new VectorDB({ ...this.nativeOptions, storagePath: this.storagePath });
+      this.defaultEfSearch = efSearch;
+
+      this.cachedCount = await this.db.len();
+      this.storeWasEmpty = this.cachedCount === 0;
 
       // Initialize memory-mapped storage if enabled and available
       if (this.mmapEnabled && this.config.mmapPath) {
@@ -353,6 +484,7 @@ export class RuVectorBackend implements VectorBackend {
 
       this.initialized = true;
     } catch (error) {
+      this.removeOwnedTempDir();
       const errorMessage = (error as Error).message;
 
       // Special handling for path validation errors (from ruvector package)
@@ -458,104 +590,67 @@ export class RuVectorBackend implements VectorBackend {
   }
 
   /**
-   * Insert single vector with optional metadata
+   * Insert single vector with optional metadata.
+   *
+   * The native write is queued; searchAsync()/flush() wait for it. Use
+   * insertAsync() to await the write and observe its errors directly.
    */
   insert(id: string, embedding: Float32Array, metadata?: Record<string, any>): void {
-    this.ensureInitialized();
-
-    // Validate id
-    if (!id || typeof id !== 'string') {
-      throw new Error('Vector ID must be a non-empty string');
-    }
-
-    // Validate embedding type
-    if (!(embedding instanceof Float32Array) && !Array.isArray(embedding)) {
-      throw new Error('Embedding must be a Float32Array or array');
-    }
-
-    // Check metadata store size limit
-    if (metadata && this.metadata.size >= MAX_METADATA_ENTRIES) {
-      throw new Error(`Metadata store has reached maximum capacity of ${MAX_METADATA_ENTRIES}`);
-    }
-
-    const startTime = this.config.enableStats !== false ? performance.now() : 0;
-
-    // RuVector v0.1.30+ uses object API with 'vector' field
-    // Native VectorDB requires Float32Array, not regular array
-    this.db.insert({
-      id: id,
-      vector: embedding instanceof Float32Array ? embedding : new Float32Array(embedding),
-      metadata: metadata
+    void this.insertAsync(id, embedding, metadata).catch(() => {
+      /* recorded by enqueue(); surfaced by flush() */
     });
+  }
 
-    if (metadata) {
-      this.metadata.set(id, metadata);
-    }
-
-    // Track insert latency
-    if (this.config.enableStats !== false) {
-      const latency = performance.now() - startTime;
-      this.stats.insertCount++;
-      this.stats.insertTotalLatencyMs += latency;
-      this.stats.insertMinLatencyMs = Math.min(this.stats.insertMinLatencyMs, latency);
-      this.stats.insertMaxLatencyMs = Math.max(this.stats.insertMaxLatencyMs, latency);
-    }
+  async insertAsync(id: string, embedding: Float32Array, metadata?: Record<string, any>): Promise<void> {
+    this.ensureInitialized();
+    const startTime = this.config.enableStats !== false ? performance.now() : 0;
+    const vector = this.validateEntry(id, embedding, metadata);
+    this.setMetadata(id, metadata);
+    const write = this.enqueue(() => this.writeNative([{ id, vector }]));
+    this.recordInsertLatency(startTime);
+    await write;
   }
 
   /**
-   * Batch insert for optimal performance (sequential)
+   * Batch insert (queued; see insert())
    */
   insertBatch(items: Array<{ id: string; embedding: Float32Array; metadata?: Record<string, any> }>): void {
-    this.ensureInitialized();
+    void this.insertBatchAsync(items).catch(() => {
+      /* recorded by enqueue(); surfaced by flush() */
+    });
+  }
 
+  async insertBatchAsync(
+    items: Array<{ id: string; embedding: Float32Array; metadata?: Record<string, any> }>
+  ): Promise<void> {
+    this.ensureInitialized();
+    if (items.length === 0) return;
+    const entries: Array<{ id: string; vector: Float32Array }> = [];
     for (const item of items) {
-      this.insert(item.id, item.embedding, item.metadata);
+      entries.push({ id: item.id, vector: this.validateEntry(item.id, item.embedding, item.metadata) });
     }
+    for (const item of items) this.setMetadata(item.id, item.metadata);
+    for (let i = 0; i < entries.length; i += MAX_BATCH_SIZE) {
+      const chunk = entries.slice(i, i + MAX_BATCH_SIZE);
+      void this.enqueue(() => this.writeNative(chunk)).catch(() => { /* surfaced below */ });
+    }
+    await this.flush();
   }
 
   /**
-   * Parallel batch insert with semaphore-controlled concurrency
+   * Batch insert in chunks of `batchSize`.
    *
-   * Processes items in parallel batches for improved throughput on multi-core systems.
-   * Uses a semaphore to control the maximum number of concurrent insertions.
-   *
-   * @param items - Array of items to insert
-   * @param options - Configuration options
-   * @param options.batchSize - Number of items per batch (default: 100)
-   * @param options.concurrency - Max concurrent batches (default: config.parallelConcurrency or 4)
-   * @returns Promise that resolves when all items are inserted
+   * Native writes are serialized through the backend queue, so `concurrency`
+   * no longer changes throughput; it is kept for API compatibility.
    */
   async insertBatchParallel(
     items: Array<{ id: string; embedding: Float32Array; metadata?: Record<string, any> }>,
     options?: { batchSize?: number; concurrency?: number }
   ): Promise<void> {
-    this.ensureInitialized();
-
-    const batchSize = options?.batchSize ?? 100;
-    const concurrency = options?.concurrency ?? this.config.parallelConcurrency ?? 4;
-
-    // Create a semaphore with the specified concurrency
-    const semaphore = new Semaphore(concurrency);
-
-    // Split items into batches
-    const batches: Array<Array<{ id: string; embedding: Float32Array; metadata?: Record<string, any> }>> = [];
+    const batchSize = Math.max(1, options?.batchSize ?? 100);
     for (let i = 0; i < items.length; i += batchSize) {
-      batches.push(items.slice(i, i + batchSize));
+      await this.insertBatchAsync(items.slice(i, i + batchSize));
     }
-
-    // Process batches in parallel with semaphore control
-    const promises = batches.map(async (batch) => {
-      await semaphore.acquire();
-      try {
-        for (const item of batch) {
-          this.insert(item.id, item.embedding, item.metadata);
-        }
-      } finally {
-        semaphore.release();
-      }
-    });
-
-    await Promise.all(promises);
   }
 
   /**
@@ -590,7 +685,7 @@ export class RuVectorBackend implements VectorBackend {
         }
       }
 
-      // Insert using pooled buffer
+      // insert() copies the vector before queueing, so the buffer can be reused
       this.insert(id, buffer, metadata);
     } finally {
       // Return buffer to pool
@@ -599,80 +694,50 @@ export class RuVectorBackend implements VectorBackend {
   }
 
   /**
-   * Search for k-nearest neighbors with optional filtering and early termination
-   * @inline V8 optimization hint - hot path function
+   * Synchronous search is not possible: every ruvector-core call is async.
+   * Use searchAsync() (or searchVectors() from VectorBackend.ts).
    */
-  search(query: Float32Array, k: number, options?: SearchOptions): SearchResult[] {
+  search(_query: Float32Array, _k: number, _options?: SearchOptions): SearchResult[] {
+    throw new Error(
+      'RuVectorBackend search is async-only. Use searchAsync() or the VectorBackendAsync interface.'
+    );
+  }
+
+  /**
+   * Search for k-nearest neighbors with optional filtering.
+   * Waits for queued writes so a preceding insert is visible.
+   */
+  async searchAsync(query: Float32Array, k: number, options?: SearchOptions): Promise<SearchResult[]> {
     this.ensureInitialized();
+    await this.queue;
 
     const startTime = this.config.enableStats !== false ? performance.now() : 0;
+    const hasFilter = !!options?.filter && Object.keys(options.filter).length > 0;
+    // Metadata filters are applied after the ANN search, so over-fetch.
+    const fetchK = hasFilter ? Math.min(k * 4, Math.max(k, this.cachedCount)) : k;
 
-    // Apply efSearch parameter if provided
-    if (options?.efSearch) {
-      this.db.setEfSearch(options.efSearch);
-    }
+    const raw: Array<{ id: string; score: number }> = fetchK > 0
+      ? await this.db.search({
+        vector: query instanceof Float32Array ? query : new Float32Array(query),
+        k: fetchK,
+        efSearch: options?.efSearch ?? this.defaultEfSearch,
+      })
+      : [];
 
-    // RuVector v0.1.30+ supports both object API and legacy positional args
-    // Use object API for consistency with insert
-    // Native VectorDB requires Float32Array, not regular array
-    const results = this.db.search({
-      vector: query instanceof Float32Array ? query : new Float32Array(query),
-      k: k,
-      threshold: options?.threshold,
-      filter: options?.filter
-    });
-
-    // @inline Early termination threshold for perfect matches
-    const earlyTermThreshold = 0.9999;
-    let perfectMatches = 0;
-    const maxPerfectMatches = k;
-
-    // @inline Convert results and apply filtering with early termination
-    const filteredResults: SearchResult[] = [];
-    const resultsLen = results.length | 0;
-
-    for (let i = 0; i < resultsLen; i++) {
-      const r = results[i] as { id: string; distance: number };
-      const similarity = this.distanceToSimilarity(r.distance);
-
-      // Apply similarity threshold
-      if (options?.threshold && similarity < options.threshold) {
-        continue;
-      }
+    const results: SearchResult[] = [];
+    for (const r of raw) {
+      // ruvector-core reports a distance in `score` (0 = identical for cosine)
+      const distance = r.score;
+      const similarity = this.distanceToSimilarity(distance);
+      if (options?.threshold !== undefined && similarity < options.threshold) continue;
 
       const metadata = this.metadata.get(r.id);
+      if (hasFilter && !this.matchesFilter(metadata, options!.filter!)) continue;
 
-      // Apply metadata filters
-      if (options?.filter && metadata) {
-        const filterEntries = Object.entries(options.filter);
-        let matchesFilter = true;
-        for (let j = 0; j < filterEntries.length; j++) {
-          const [key, value] = filterEntries[j];
-          if (metadata[key] !== value) {
-            matchesFilter = false;
-            break;
-          }
-        }
-        if (!matchesFilter) continue;
-      }
-
-      filteredResults.push({
-        id: r.id,
-        distance: r.distance,
-        similarity,
-        metadata
-      });
-
-      // @inline Early termination for perfect matches
-      if (similarity >= earlyTermThreshold) {
-        perfectMatches++;
-        if (perfectMatches >= maxPerfectMatches) {
-          break;
-        }
-      }
+      results.push({ id: r.id, distance, similarity, metadata });
+      if (results.length >= k) break;
     }
 
-    // Track search latency
     if (this.config.enableStats !== false) {
       const latency = performance.now() - startTime;
       this.stats.searchCount++;
@@ -681,40 +746,77 @@ export class RuVectorBackend implements VectorBackend {
       this.stats.searchMaxLatencyMs = Math.max(this.stats.searchMaxLatencyMs, latency);
     }
 
-    return filteredResults;
+    return results;
   }
 
-  /**
-   * Remove vector by ID
-   */
-  remove(id: string): boolean {
-    this.ensureInitialized();
+  private matchesFilter(metadata: Record<string, any> | undefined, filter: Record<string, unknown>): boolean {
+    if (!metadata) return false;
+    for (const [key, value] of Object.entries(filter)) {
+      if (metadata[key] !== value) return false;
+    }
+    return true;
+  }
 
-    this.metadata.delete(id);
-
-    try {
-      return this.db.remove(id);
-    } catch {
-      return false;
+  private setMetadata(id: string, metadata?: Record<string, any>): void {
+    if (metadata) {
+      this.metadata.set(id, metadata);
+    } else {
+      this.metadata.delete(id);
     }
   }
 
   /**
-   * Get database statistics
+   * Remove vector by ID. The native delete is queued; the return value only
+   * reports whether this instance has seen the id. Use removeAsync() for the
+   * authoritative result.
+   */
+  remove(id: string): boolean {
+    this.ensureInitialized();
+    const known = this.knownIds.has(id) || this.metadata.has(id);
+    void this.removeAsync(id).catch(() => { /* recorded by enqueue() */ });
+    return known;
+  }
+
+  async removeAsync(id: string): Promise<boolean> {
+    this.ensureInitialized();
+    this.metadata.delete(id);
+    return this.enqueue(() => this.deleteNative(id));
+  }
+
+  /**
+   * Get database statistics. `count` reflects settled writes; await flush()
+   * or use getStatsAsync() to include queued ones.
    */
   getStats(): VectorStats {
     this.ensureInitialized();
-
-    const memoryUsage = this.db.memoryUsage?.() || 0;
-    this.stats.lastMemoryUsage = memoryUsage;
-
     return {
-      count: this.db.count(),
+      count: this.cachedCount,
       dimension: this.config.dimension || 384,
       metric: this.config.metric,
       backend: 'ruvector',
-      memoryUsage: memoryUsage
+      memoryUsage: 0,
     };
+  }
+
+  async getStatsAsync(): Promise<VectorStats> {
+    this.ensureInitialized();
+    await this.queue;
+    this.cachedCount = await this.db.len();
+    return this.getStats();
+  }
+
+  /**
+   * Wait for every queued native write. Throws the most recent write failure
+   * since the last flush, if any.
+   */
+  async flush(): Promise<void> {
+    if (!this.initialized) return;
+    await this.queue;
+    if (this.lastWriteError) {
+      const err = this.lastWriteError;
+      this.lastWriteError = null;
+      throw err;
+    }
   }
 
   /**
@@ -785,15 +887,11 @@ export class RuVectorBackend implements VectorBackend {
       return;
     }
 
-    const currentCount = this.db.count();
-    const params = this.getAdaptiveParams(currentCount);
+    const params = this.getAdaptiveParams(this.cachedCount);
 
-    // Check if we need to rebuild
-    // This would require checking current params vs recommended
-    // For now, just set efSearch which doesn't require rebuild
-    if (this.db.setEfSearch) {
-      this.db.setEfSearch(params.efSearch);
-    }
+    // M and efConstruction are fixed when the native index is built; efSearch
+    // is a per-query parameter, so adopt the recommended value as the default.
+    this.defaultEfSearch = params.efSearch;
 
     this.stats.indexRebuildCount++;
   }
@@ -807,8 +905,15 @@ export class RuVectorBackend implements VectorBackend {
     // Validate path for security
     validatePath(savePath);
 
-    // Save vector index
-    this.db.save(savePath);
+    // The native index persists itself at storagePath; once queued writes have
+    // settled, saving elsewhere is a file copy.
+    await this.flush();
+    const pathModule = await import('path');
+    const target = pathModule.resolve(savePath);
+    if (target !== this.storagePath) {
+      const fsp = await import('fs/promises');
+      await fsp.copyFile(this.storagePath, target);
+    }
 
     // Save metadata separately as JSON
     const metadataPath = savePath + '.meta.json';
@@ -830,8 +935,23 @@ export class RuVectorBackend implements VectorBackend {
     // Validate path for security
     validatePath(loadPath);
 
-    // Load vector index
-    this.db.load(loadPath);
+    // Reopen the native index at loadPath
+    await this.flush();
+    const pathModule = await import('path');
+    const source = pathModule.resolve(loadPath);
+    if (source !== this.storagePath) {
+      const fsSync = await import('fs');
+      if (!fsSync.existsSync(source)) {
+        throw new Error(`RuVector index not found: ${loadPath}`);
+      }
+      this.db = new this.VectorDbCtor({ ...this.nativeOptions, storagePath: source });
+      this.removeOwnedTempDir();
+      this.storagePath = source;
+    }
+    this.cachedCount = await this.db.len();
+    this.storeWasEmpty = this.cachedCount === 0;
+    this.knownIds.clear();
+    this.metadata.clear();
 
     // Load metadata
     const metadataPath = loadPath + '.meta.json';
@@ -883,7 +1003,18 @@ export class RuVectorBackend implements VectorBackend {
    * Close and cleanup resources
    */
   close(): void {
-    // RuVector cleanup if needed
+    // The native binding has no close(); drop our reference once queued
+    // writes settle, then remove a temp index this instance created.
+    const ownedTempDir = this.ownedTempDir;
+    this.ownedTempDir = null;
+    if (ownedTempDir) {
+      this.queue.finally(() => {
+        this.ownedTempDir = ownedTempDir;
+        this.removeOwnedTempDir();
+      });
+    }
+    this.initialized = false;
+    this.knownIds.clear();
     this.metadata.clear();
 
     // Clear buffer pool

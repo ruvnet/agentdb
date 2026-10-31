@@ -12,9 +12,16 @@ import type { IDatabaseConnection, DatabaseRows } from '../types/database.types.
 import { normalizeRowId } from '../types/database.types.js';
 import { EmbeddingService } from './EmbeddingService.js';
 import { VectorBackend } from '../backends/VectorBackend.js';
+import { searchVectors } from '../backends/VectorBackend.js';
 import type { GraphDatabaseAdapter } from '../backends/graph/GraphDatabaseAdapter.js';
 import { NodeIdMapper } from '../utils/NodeIdMapper.js';
 import { QueryCache, type QueryCacheConfig } from '../core/QueryCache.js';
+
+/** Vector ids this controller writes: "skill:<rowid>" */
+const SKILL_VECTOR_ID = /^skill:(\d+)$/;
+
+/** Stay well under SQLite's bound-parameter limit (999 on older builds) */
+const MAX_SQL_PARAMS = 500;
 
 /** Parse JSON from DB row values without throwing on malformed data. */
 function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
@@ -157,10 +164,11 @@ export class SkillLibrary {
         successRate: skill.successRate,
         avgReward: skill.avgReward,
       });
-    } else {
-      // Legacy: store in database
-      this.storeSkillEmbeddingLegacy(skillId, embedding);
     }
+
+    // Always keep the SQL copy: it is the fallback when the vector index
+    // returns nothing (and the only store without a vector backend).
+    this.storeSkillEmbeddingLegacy(skillId, embedding);
 
     return skillId;
   }
@@ -263,23 +271,29 @@ export class SkillLibrary {
 
     // Use VectorBackend for semantic search (if available)
     if (this.vectorBackend) {
-      const searchResults = this.vectorBackend.search(queryEmbedding, k * 3);
+      const searchResults = await searchVectors(this.vectorBackend, queryEmbedding, k * 3);
 
-      // Map results back to skill IDs and fetch full skill data
+      // The vector backend may be shared with other controllers (episodes use
+      // bare numeric ids, causal edges "causal-edge:N"); only "skill:N" is ours.
+      const similarityById = new Map<number, number>();
+      for (const result of searchResults) {
+        const match = SKILL_VECTOR_ID.exec(result.id);
+        if (!match) continue;
+        const skillId = Number(match[1]);
+        if (!similarityById.has(skillId)) similarityById.set(skillId, result.similarity);
+      }
+
+      // No usable hits although skills exist (empty or crowded-out index):
+      // answer from the SQL embeddings instead of returning nothing.
+      if (similarityById.size === 0 && this.db.prepare('SELECT 1 FROM skills LIMIT 1').get()) {
+        const results = await this.retrieveSkillsLegacy(query);
+        this.queryCache.set(cacheKey, results);
+        return results;
+      }
+
       const skillsWithSimilarity: (Skill & { similarity: number })[] = [];
 
-      // Prepare statement ONCE outside loop (better-sqlite3 best practice)
-      const getSkillStmt = this.db.prepare<DatabaseRows.Skill>('SELECT * FROM skills WHERE id = ?');
-
-      for (const result of searchResults) {
-        // Extract skill ID from vector ID (format: "skill:123")
-        const skillId = parseInt(result.id.replace('skill:', ''));
-
-        // Fetch full skill data from database
-        const row = getSkillStmt.get(skillId);
-
-        if (!row) continue;
-
+      for (const row of this.fetchSkillsByIds([...similarityById.keys()])) {
         // Apply filters
         if (row.success_rate < minSuccessRate) continue;
 
@@ -295,7 +309,7 @@ export class SkillLibrary {
           avgLatencyMs: row.avg_latency_ms,
           createdFromEpisode: row.created_from_episode ?? undefined,
           metadata: safeJsonParse(row.metadata, undefined),
-          similarity: result.similarity,
+          similarity: similarityById.get(row.id)!,
         });
       }
 
@@ -344,7 +358,11 @@ export class SkillLibrary {
     for (const row of rows) {
       if (!row.embedding) continue;
 
-      const embedding = new Float32Array(row.embedding.buffer);
+      const embedding = new Float32Array(
+        row.embedding.buffer,
+        row.embedding.byteOffset,
+        row.embedding.byteLength / 4
+      );
       const similarity = this.cosineSimilarity(queryEmbedding, embedding);
 
       skillsWithSimilarity.push({
@@ -382,8 +400,26 @@ export class SkillLibrary {
       VALUES (?, ?)
       ON CONFLICT(skill_id) DO UPDATE SET embedding = excluded.embedding
     `);
-    const buffer = Buffer.from(embedding.buffer);
+    const buffer = Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength);
     stmt.run(skillId, buffer);
+  }
+
+  /**
+   * Load skill rows for a set of ids with one IN query per chunk
+   * (instead of one query per vector hit).
+   */
+  private fetchSkillsByIds(ids: number[]): DatabaseRows.Skill[] {
+    const rows: DatabaseRows.Skill[] = [];
+    for (let i = 0; i < ids.length; i += MAX_SQL_PARAMS) {
+      const chunk = ids.slice(i, i + MAX_SQL_PARAMS);
+      const placeholders = chunk.map(() => '?').join(',');
+      rows.push(
+        ...this.db
+          .prepare<DatabaseRows.Skill>(`SELECT * FROM skills WHERE id IN (${placeholders})`)
+          .all(...chunk)
+      );
+    }
+    return rows;
   }
 
   /**

@@ -12,11 +12,15 @@ import type { IDatabaseConnection, DatabaseRows } from '../types/database.types.
 import { normalizeRowId } from '../types/database.types.js';
 import { EmbeddingService } from './EmbeddingService.js';
 import type { VectorBackend } from '../backends/VectorBackend.js';
+import { searchVectors } from '../backends/VectorBackend.js';
 import type { LearningBackend } from '../backends/LearningBackend.js';
 import type { GraphBackend, GraphNode } from '../backends/GraphBackend.js';
 import type { GraphDatabaseAdapter } from '../backends/graph/GraphDatabaseAdapter.js';
 import { NodeIdMapper } from '../utils/NodeIdMapper.js';
 import { QueryCache, type QueryCacheConfig } from '../core/QueryCache.js';
+
+/** Vector ids this controller writes: the bare episode row id */
+const EPISODE_VECTOR_ID = /^\d+$/;
 
 /** Parse JSON from DB row values without throwing on malformed data. */
 function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
@@ -358,13 +362,20 @@ export class ReflexionMemory {
     const { k = 5, minReward, onlyFailures, onlySuccesses, timeWindowDays } = query;
 
     // Get candidates from vector backend
-    const searchResults = this.vectorBackend!.search(queryEmbedding, k * 3, {
+    const searchResults = await searchVectors(this.vectorBackend!, queryEmbedding, k * 3, {
       threshold: 0.0,
     });
 
-    // Fetch full episode data from DB
-    const episodeIds = searchResults.map((r) => parseInt(r.id));
+    // The vector backend may be shared with other controllers ("skill:N",
+    // "causal-edge:N"); episode vectors use the bare numeric row id.
+    const episodeResults = searchResults.filter((r) => EPISODE_VECTOR_ID.test(r.id));
+    const episodeIds = episodeResults.map((r) => Number(r.id));
     if (episodeIds.length === 0) {
+      // No usable hits although episodes exist (empty or crowded-out index):
+      // answer from the SQL embeddings instead of returning nothing.
+      if (this.db.prepare('SELECT 1 FROM episode_embeddings LIMIT 1').get()) {
+        return this.retrieveFromSQLFallback(queryEmbedding, query);
+      }
       return [];
     }
 
@@ -374,7 +385,7 @@ export class ReflexionMemory {
     // Map results with similarity scores and apply filters
     const episodes: EpisodeWithEmbedding[] = [];
 
-    for (const result of searchResults) {
+    for (const result of episodeResults) {
       const row = episodeMap.get(result.id);
       if (!row) continue;
 
@@ -981,7 +992,7 @@ export class ReflexionMemory {
 
     try {
       // Get initial neighbors
-      const initialResults = this.vectorBackend.search(queryEmbedding, k * 2, {
+      const initialResults = await searchVectors(this.vectorBackend, queryEmbedding, k * 2, {
         threshold: 0.0,
       });
 
@@ -993,7 +1004,10 @@ export class ReflexionMemory {
       const neighborEmbeddings: Float32Array[] = [];
       const weights: number[] = [];
 
-      const episodeIds = initialResults.map((r) => r.id);
+      const episodeIds = initialResults.map((r) => r.id).filter((id) => EPISODE_VECTOR_ID.test(id));
+      if (episodeIds.length === 0) {
+        return queryEmbedding;
+      }
       const placeholders = episodeIds.map(() => '?').join(',');
       const episodes = this.db
         .prepare(

@@ -19,6 +19,7 @@ import { CausalMemoryGraph, CausalEdge } from './CausalMemoryGraph.js';
 import { ExplainableRecall, RecallCertificate } from './ExplainableRecall.js';
 import { EmbeddingService } from './EmbeddingService.js';
 import type { VectorBackend } from '../backends/VectorBackend.js';
+import { searchVectors } from '../backends/VectorBackend.js';
 
 export interface RerankConfig {
   alpha: number; // Similarity weight (default: 0.7)
@@ -150,7 +151,7 @@ export class CausalRecall {
   ): Promise<Array<{ id: string; type: string; content: string; similarity: number; latencyMs: number }>> {
     // Use optimized vector backend if available (100x faster)
     if (this.vectorBackend && typeof this.vectorBackend.search === 'function') {
-      const searchResults = this.vectorBackend.search(queryEmbedding, k, {
+      const searchResults = await searchVectors(this.vectorBackend, queryEmbedding, k, {
         threshold: 0.0
       });
 

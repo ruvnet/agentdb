@@ -11,6 +11,7 @@
  */
 
 import type { VectorBackend, SearchResult as VectorSearchResult } from '../backends/VectorBackend.js';
+import { searchVectors } from '../backends/VectorBackend.js';
 
 // ============================================================================
 // Performance & Security Constants
@@ -770,7 +771,7 @@ export class EnhancedEmbeddingService {
     const queryEmbedding = await this.embed(query);
 
     // Search using RuVector
-    const results = this.config.vectorBackend.search(queryEmbedding, k);
+    const results = await searchVectors(this.config.vectorBackend, queryEmbedding, k);
 
     // Convert to SearchResult format
     return results.map((r: VectorSearchResult) => ({
@@ -844,7 +845,7 @@ export class EnhancedEmbeddingService {
 
     const queryEmbedding = await this.embed(query);
 
-    const results = this.config.vectorBackend.search(queryEmbedding, k, {
+    const results = await searchVectors(this.config.vectorBackend, queryEmbedding, k, {
       filter: filter as Record<string, any>,
     });
 

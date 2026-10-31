@@ -22,6 +22,7 @@ import type { IDatabaseConnection, DatabaseRows } from '../types/database.types.
 import { normalizeRowId } from '../types/database.types.js';
 import { EmbeddingService } from './EmbeddingService.js';
 import type { VectorBackend, SearchResult } from '../backends/VectorBackend.js';
+import { searchVectors } from '../backends/VectorBackend.js';
 
 /** Parse JSON from DB row values without throwing on malformed data. */
 function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
@@ -278,7 +279,7 @@ export class ReasoningBank {
     // Optional: Apply GNN enhancement
     if (query.useGNN && this.learningBackend) {
       // Get initial candidates for GNN context
-      const candidates = this.vectorBackend!.search(queryEmbedding, k * 3, { threshold: 0.0 });
+      const candidates = await searchVectors(this.vectorBackend!, queryEmbedding, k * 3, { threshold: 0.0 });
 
       if (candidates.length > 0) {
         // Retrieve neighbor embeddings for GNN
@@ -293,7 +294,7 @@ export class ReasoningBank {
     }
 
     // Perform vector search
-    const results = this.vectorBackend!.search(queryEmbedding, k, { threshold });
+    const results = await searchVectors(this.vectorBackend!, queryEmbedding, k, { threshold });
 
     // Hydrate with metadata from SQLite
     return this.hydratePatterns(results);

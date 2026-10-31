@@ -23,6 +23,7 @@ import { NodeIdMapper } from '../utils/NodeIdMapper.js';
 import { AttentionService, type HyperbolicAttentionConfig } from '../services/AttentionService.js';
 import { EmbeddingService } from './EmbeddingService.js';
 import type { VectorBackend } from '../backends/VectorBackend.js';
+import { searchVectors } from '../backends/VectorBackend.js';
 
 /**
  * Configuration for CausalMemoryGraph
@@ -440,7 +441,7 @@ export class CausalMemoryGraph {
     const queryEmbedding = await this.embedder.embedQuery(mechanism);
 
     // Search for similar causal edges using vectorBackend
-    const results = this.vectorBackend.search(queryEmbedding, k * 2); // Get more to filter by confidence
+    const results = await searchVectors(this.vectorBackend, queryEmbedding, k * 2); // Get more to filter by confidence
 
     // Filter results to only causal-edge entries and by confidence
     const filteredResults = results.filter(result => {

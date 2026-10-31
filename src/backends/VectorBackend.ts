@@ -187,3 +187,23 @@ export interface VectorBackendAsync extends VectorBackend {
   /** Flush any pending writes (for backends that batch sync calls) */
   flush(): Promise<void>;
 }
+
+/** True when the backend exposes the async API (RuVector, RVF backends). */
+export function isAsyncVectorBackend(backend: VectorBackend): backend is VectorBackendAsync {
+  return typeof (backend as Partial<VectorBackendAsync>).searchAsync === 'function';
+}
+
+/**
+ * k-NN search that works with both sync and async-native backends.
+ * Async-native backends cannot answer the sync search() — use this instead.
+ */
+export async function searchVectors(
+  backend: VectorBackend,
+  query: Float32Array,
+  k: number,
+  options?: SearchOptions
+): Promise<SearchResult[]> {
+  return isAsyncVectorBackend(backend)
+    ? backend.searchAsync(query, k, options)
+    : backend.search(query, k, options);
+}

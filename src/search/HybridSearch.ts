@@ -13,6 +13,7 @@
  */
 
 import type { VectorBackend, SearchResult, SearchOptions } from '../backends/VectorBackend.js';
+import { searchVectors } from '../backends/VectorBackend.js';
 
 // ============================================================================
 // Types and Interfaces
@@ -601,7 +602,8 @@ export class HybridSearch {
       };
 
       // Request more results than limit for better fusion
-      vectorResults = this.vectorBackend.search(
+      vectorResults = await searchVectors(
+        this.vectorBackend,
         query.vector,
         Math.min(limit * 3, 1000),
         searchOptions
