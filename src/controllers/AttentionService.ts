@@ -120,7 +120,7 @@ export class AttentionService {
       performance.measure('attention-service-init', 'attention-service-init-start', 'attention-service-init-end');
 
       const measure = performance.getEntriesByName('attention-service-init')[0];
-      console.log(`✅ AttentionService initialized in ${measure.duration.toFixed(2)}ms (${this.wasmManager.getRuntime()})`);
+      console.error(`✅ AttentionService initialized in ${measure.duration.toFixed(2)}ms (${this.wasmManager.getRuntime()})`);
 
       // Clear performance entries to prevent memory leak
       this.metricsTracker.clearPerformanceEntries('attention-service-init');
@@ -403,7 +403,7 @@ export class AttentionService {
 
       // Log performance metrics for ADR-071 verification
       if (speedup && speedup >= AttentionConfigManager.FLASH_V2_MIN_SPEEDUP) {
-        console.log(
+        console.error(
           `✅ Flash Attention v2 achieved ${speedup.toFixed(2)}x speedup ` +
           `(target: ${AttentionConfigManager.FLASH_V2_MIN_SPEEDUP}x-${AttentionConfigManager.FLASH_V2_MAX_SPEEDUP}x)`
         );
@@ -737,7 +737,7 @@ export class AttentionService {
     // Reset stats
     this.metricsTracker.resetStats();
 
-    console.log('✅ AttentionService disposed');
+    console.error('✅ AttentionService disposed');
   }
 
   /**

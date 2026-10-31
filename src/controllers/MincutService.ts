@@ -49,7 +49,7 @@ export class MincutService {
       // @ts-expect-error - Optional dependency may not be installed
       const napi = await import('@ruvector/mincut');
       this.napiModule = napi;
-      console.log('✅ Loaded @ruvector/mincut NAPI module');
+      console.error('✅ Loaded @ruvector/mincut NAPI module');
     } catch (err) {
       // Fall back to WASM
       try {
@@ -57,7 +57,7 @@ export class MincutService {
         const wasm = await import('ruvector-mincut-wasm');
         await wasm.default();
         this.wasmModule = wasm;
-        console.log('✅ Loaded ruvector-mincut-wasm module');
+        console.error('✅ Loaded ruvector-mincut-wasm module');
       } catch (wasmErr) {
         console.warn('⚠️  No mincut bindings available, using fallback');
       }

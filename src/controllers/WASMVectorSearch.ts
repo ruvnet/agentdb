@@ -196,7 +196,7 @@ export class WASMVectorSearch {
         const ReasoningBankWasm = wasmModule.ReasoningBankWasm || wasmModule.default?.ReasoningBankWasm;
 
         if (!ReasoningBankWasm) {
-          console.debug(`[WASMVectorSearch] Module found at ${normalizedPath} but ReasoningBankWasm not exported`);
+          console.error(`[WASMVectorSearch] Module found at ${normalizedPath} but ReasoningBankWasm not exported`);
           continue;
         }
 
@@ -210,13 +210,13 @@ export class WASMVectorSearch {
         this.wasmAvailable = true;
 
         if (process.env.NODE_ENV !== 'production') {
-          console.log(`[WASMVectorSearch] ReasoningBank WASM acceleration enabled (loaded from: ${normalizedPath})`);
+          console.error(`[WASMVectorSearch] ReasoningBank WASM acceleration enabled (loaded from: ${normalizedPath})`);
         }
         return;
       } catch (error: any) {
         // Log in development mode for debugging
         if (process.env.NODE_ENV === 'development') {
-          console.debug(`[WASMVectorSearch] Failed to load from ${normalizedPath}: ${error.message}`);
+          console.error(`[WASMVectorSearch] Failed to load from ${normalizedPath}: ${error.message}`);
         }
         continue;
       }
@@ -226,10 +226,10 @@ export class WASMVectorSearch {
     this.wasmAvailable = false;
 
     if (process.env.NODE_ENV === 'development') {
-      console.debug('[WASMVectorSearch] ReasoningBank WASM not available, using optimized JavaScript fallback');
-      console.debug(`[WASMVectorSearch] Searched ${triedPaths.length} paths:`, triedPaths.slice(0, 5).join(', '));
+      console.error('[WASMVectorSearch] ReasoningBank WASM not available, using optimized JavaScript fallback');
+      console.error(`[WASMVectorSearch] Searched ${triedPaths.length} paths:`, triedPaths.slice(0, 5).join(', '));
     } else {
-      console.log('[WASMVectorSearch] Using optimized JavaScript fallback (WASM not available)');
+      console.error('[WASMVectorSearch] Using optimized JavaScript fallback (WASM not available)');
     }
   }
 
@@ -251,7 +251,7 @@ export class WASMVectorSearch {
         ]));
 
       if (this.simdAvailable) {
-        console.log('[WASMVectorSearch] SIMD support detected');
+        console.error('[WASMVectorSearch] SIMD support detected');
       }
     } catch {
       this.simdAvailable = false;
@@ -388,11 +388,11 @@ export class WASMVectorSearch {
    */
   buildIndex(vectors: Float32Array[], ids: number[], metadata?: any[]): void {
     if (vectors.length < this.config.indexThreshold) {
-      console.log(`[WASMVectorSearch] Dataset too small (${vectors.length} < ${this.config.indexThreshold}), skipping index`);
+      console.error(`[WASMVectorSearch] Dataset too small (${vectors.length} < ${this.config.indexThreshold}), skipping index`);
       return;
     }
 
-    console.log(`[WASMVectorSearch] Building ANN index for ${vectors.length} vectors...`);
+    console.error(`[WASMVectorSearch] Building ANN index for ${vectors.length} vectors...`);
 
     this.vectorIndex = {
       vectors,
@@ -402,7 +402,7 @@ export class WASMVectorSearch {
       lastUpdate: Date.now(),
     };
 
-    console.log(`[WASMVectorSearch] ANN index built successfully`);
+    console.error(`[WASMVectorSearch] ANN index built successfully`);
   }
 
   /**
@@ -458,6 +458,6 @@ export class WASMVectorSearch {
    */
   clearIndex(): void {
     this.vectorIndex = null;
-    console.log('[WASMVectorSearch] Index cleared');
+    console.error('[WASMVectorSearch] Index cleared');
   }
 }

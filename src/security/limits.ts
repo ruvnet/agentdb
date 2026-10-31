@@ -364,7 +364,7 @@ export const rateLimiters = {
 export function logResourceUsage(): void {
   const stats = globalResourceTracker.getStats();
 
-  console.log('[ResourceMonitor]', {
+  console.error('[ResourceMonitor]', {
     memory: `${stats.memoryUsageMB.toFixed(2)}MB / ${stats.memoryLimitMB}MB (${stats.memoryUtilization.toFixed(1)}%)`,
     queries: stats.queryCount,
     avgQueryTime: `${stats.avgQueryTimeMs.toFixed(2)}ms`,

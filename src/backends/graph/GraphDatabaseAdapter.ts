@@ -138,7 +138,7 @@ export class GraphDatabaseAdapter {
       try {
         if (require('fs').existsSync(this.config.storagePath)) {
           this.db = GraphDatabase.open(this.config.storagePath);
-          console.log('✅ Opened existing RuVector graph database');
+          console.error('✅ Opened existing RuVector graph database');
           return;
         }
       } catch (e) {
@@ -152,7 +152,7 @@ export class GraphDatabaseAdapter {
         storagePath: this.config.storagePath
       });
 
-      console.log('✅ Created new RuVector graph database');
+      console.error('✅ Created new RuVector graph database');
 
     } catch (error) {
       throw new Error(

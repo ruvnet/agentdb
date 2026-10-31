@@ -935,7 +935,7 @@ export class SIMDVectorOps {
     };
 
     if (this.config.enableLogging) {
-      console.log(
+      console.error(
         `[SIMDVectorOps] Initialized with SIMD ${this.simdEnabled ? 'enabled' : 'disabled'}`
       );
     }

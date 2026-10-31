@@ -205,12 +205,12 @@ export async function createBackend(
     // Try native @ruvector/rvf first, fall back to sql.js-rvf
     if (detection.rvf.sdk) {
       backend = await createRvfBackend(config);
-      console.log(
+      console.error(
         `[AgentDB] Using RVF backend (${detection.rvf.node ? 'N-API native' : 'WASM'})`
       );
     } else if (detection.sqljsRvf) {
       backend = await createSqlJsRvfBackend(config);
-      console.log('[AgentDB] Using sql.js RVF backend (built-in)');
+      console.error('[AgentDB] Using sql.js RVF backend (built-in)');
     } else {
       throw new Error(
         'RVF backend not available.\n' +
@@ -231,7 +231,7 @@ export async function createBackend(
     // Auto-detect best available backend (priority: ruvector > rvf > hnswlib)
     if (detection.ruvector.core) {
       backend = new RuVectorBackend(config);
-      console.log(
+      console.error(
         `[AgentDB] Using RuVector backend (${detection.ruvector.native ? 'native' : 'WASM'})`
       );
 
@@ -244,12 +244,12 @@ export async function createBackend(
 
         // Try RVF as first fallback
         if (detection.rvf.sdk) {
-          console.log('[AgentDB] RuVector initialization failed, trying RVF backend');
-          console.log(`[AgentDB] Reason: ${errorMessage.split('\n')[0]}`);
+          console.error('[AgentDB] RuVector initialization failed, trying RVF backend');
+          console.error(`[AgentDB] Reason: ${errorMessage.split('\n')[0]}`);
           try {
             backend = await createRvfBackend(config);
             await (backend as unknown as { initialize(): Promise<void> }).initialize();
-            console.log(`[AgentDB] Using RVF backend (${detection.rvf.node ? 'N-API' : 'WASM'} fallback)`);
+            console.error(`[AgentDB] Using RVF backend (${detection.rvf.node ? 'N-API' : 'WASM'} fallback)`);
             return backend;
           } catch {
             // RVF also failed, try HNSWLib
@@ -258,26 +258,26 @@ export async function createBackend(
 
         // Try HNSWLib as next fallback
         if (detection.hnswlib) {
-          console.log('[AgentDB] Falling back to HNSWLib');
+          console.error('[AgentDB] Falling back to HNSWLib');
           backend = await createHNSWLibBackend(config);
-          console.log('[AgentDB] Using HNSWLib backend (fallback)');
+          console.error('[AgentDB] Using HNSWLib backend (fallback)');
         } else if (detection.sqljsRvf) {
-          console.log('[AgentDB] Falling back to sql.js RVF backend');
+          console.error('[AgentDB] Falling back to sql.js RVF backend');
           backend = await createSqlJsRvfBackend(config);
-          console.log('[AgentDB] Using sql.js RVF backend (built-in fallback)');
+          console.error('[AgentDB] Using sql.js RVF backend (built-in fallback)');
         } else {
           throw error;
         }
       }
     } else if (detection.rvf.sdk) {
       backend = await createRvfBackend(config);
-      console.log(`[AgentDB] Using RVF backend (${detection.rvf.node ? 'N-API native' : 'WASM'})`);
+      console.error(`[AgentDB] Using RVF backend (${detection.rvf.node ? 'N-API native' : 'WASM'})`);
     } else if (detection.hnswlib) {
       backend = await createHNSWLibBackend(config);
-      console.log('[AgentDB] Using HNSWLib backend (fallback)');
+      console.error('[AgentDB] Using HNSWLib backend (fallback)');
     } else if (detection.sqljsRvf) {
       backend = await createSqlJsRvfBackend(config);
-      console.log('[AgentDB] Using sql.js RVF backend (built-in)');
+      console.error('[AgentDB] Using sql.js RVF backend (built-in)');
     } else {
       throw new Error(
         'No vector backend available.\n' +

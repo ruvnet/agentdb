@@ -188,7 +188,7 @@ export class HNSWIndex {
    */
   async buildIndex(tableName: string = 'pattern_embeddings'): Promise<void> {
     const start = Date.now();
-    console.log(`[HNSWIndex] Building HNSW index from ${tableName}...`);
+    console.error(`[HNSWIndex] Building HNSW index from ${tableName}...`);
 
     // Ensure any pending initialization is complete
     await this.initialize();
@@ -226,7 +226,7 @@ export class HNSWIndex {
       this.nextLabel = 0;
 
       // Add vectors to index
-      console.log(`[HNSWIndex] Adding ${rows.length} vectors to index...`);
+      console.error(`[HNSWIndex] Adding ${rows.length} vectors to index...`);
 
       for (const row of rows) {
         const id = row.id;
@@ -251,11 +251,11 @@ export class HNSWIndex {
       this.lastBuildTime = Date.now();
 
       const duration = (Date.now() - start) / 1000;
-      console.log(`[HNSWIndex] ✅ Index built successfully in ${duration.toFixed(2)}s`);
-      console.log(`[HNSWIndex] - Elements: ${rows.length}`);
-      console.log(`[HNSWIndex] - Dimension: ${this.config.dimension}`);
-      console.log(`[HNSWIndex] - M: ${this.config.M}`);
-      console.log(`[HNSWIndex] - efConstruction: ${this.config.efConstruction}`);
+      console.error(`[HNSWIndex] ✅ Index built successfully in ${duration.toFixed(2)}s`);
+      console.error(`[HNSWIndex] - Elements: ${rows.length}`);
+      console.error(`[HNSWIndex] - Dimension: ${this.config.dimension}`);
+      console.error(`[HNSWIndex] - M: ${this.config.M}`);
+      console.error(`[HNSWIndex] - efConstruction: ${this.config.efConstruction}`);
 
       // Persist index if enabled
       if (this.config.persistIndex && this.config.indexPath) {
@@ -359,7 +359,7 @@ export class HNSWIndex {
     const updatePercentage = this.updatesSinceLastBuild / totalElements;
 
     if (updatePercentage > this.config.rebuildThreshold) {
-      console.log(`[HNSWIndex] Rebuild threshold reached (${(updatePercentage * 100).toFixed(1)}%)`);
+      console.error(`[HNSWIndex] Rebuild threshold reached (${(updatePercentage * 100).toFixed(1)}%)`);
     }
   }
 
@@ -424,7 +424,7 @@ export class HNSWIndex {
 
       fs.writeFileSync(mappingsPath, JSON.stringify(mappings, null, 2));
 
-      console.log(`[HNSWIndex] Index saved to ${this.config.indexPath}`);
+      console.error(`[HNSWIndex] Index saved to ${this.config.indexPath}`);
     } catch (error) {
       console.error('[HNSWIndex] Failed to save index:', error);
     }
@@ -439,7 +439,7 @@ export class HNSWIndex {
     }
 
     try {
-      console.log(`[HNSWIndex] Loading index from ${this.config.indexPath}...`);
+      console.error(`[HNSWIndex] Loading index from ${this.config.indexPath}...`);
 
       // Lazy-load hnswlib-node first
       await loadHnswlib();
@@ -460,7 +460,7 @@ export class HNSWIndex {
       }
 
       this.indexBuilt = true;
-      console.log(`[HNSWIndex] ✅ Index loaded successfully (${this.labelToId.size} elements)`);
+      console.error(`[HNSWIndex] ✅ Index loaded successfully (${this.labelToId.size} elements)`);
     } catch (error) {
       console.warn('[HNSWIndex] Failed to load index:', error);
       this.index = null;
@@ -548,7 +548,7 @@ export class HNSWIndex {
     if (this.index) {
       this.index.setEf(ef);
       this.config.efSearch = ef;
-      console.log(`[HNSWIndex] efSearch updated to ${ef}`);
+      console.error(`[HNSWIndex] efSearch updated to ${ef}`);
     }
   }
 
@@ -563,7 +563,7 @@ export class HNSWIndex {
     this.nextLabel = 0;
     this.indexBuilt = false;
     this.updatesSinceLastBuild = 0;
-    console.log('[HNSWIndex] Index cleared');
+    console.error('[HNSWIndex] Index cleared');
   }
 
   /**

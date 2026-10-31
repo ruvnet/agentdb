@@ -279,7 +279,7 @@ export class AuditLogger {
         critical: '\x1b[31m', // Red
       }[severity];
 
-      console.log(
+      console.error(
         `${color}[AUDIT ${severity.toUpperCase()}]\x1b[0m ${message}`,
         event.metadata || ''
       );

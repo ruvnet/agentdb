@@ -64,7 +64,7 @@ export class UnifiedDatabase {
       // .graph extension = always use graph mode
       if (ext === '.graph') {
         this.mode = 'graph';
-        console.log('🔍 Detected .graph extension → Using RuVector GraphDatabase');
+        console.error('🔍 Detected .graph extension → Using RuVector GraphDatabase');
       }
       // .db extension = check if it's SQLite
       else if (ext === '.db') {
@@ -72,23 +72,23 @@ export class UnifiedDatabase {
 
         if (isLegacySQLite) {
           this.mode = 'sqlite-legacy';
-          console.log('🔍 Detected legacy SQLite database');
+          console.error('🔍 Detected legacy SQLite database');
 
           // Offer migration if autoMigrate is enabled
           if (this.config.autoMigrate) {
-            console.log('🔄 Auto-migration enabled, will migrate to GraphDatabase...');
+            console.error('🔄 Auto-migration enabled, will migrate to GraphDatabase...');
             await this.migrateSQLiteToGraph(dbPath, embedder);
             this.mode = 'graph';
             // Migration already initialized graphDb, skip initializeMode
             return;
           } else {
-            console.log('ℹ️  Running in legacy SQLite mode');
-            console.log('💡 To migrate to RuVector Graph: set autoMigrate: true');
+            console.error('ℹ️  Running in legacy SQLite mode');
+            console.error('💡 To migrate to RuVector Graph: set autoMigrate: true');
           }
         } else {
           // Not SQLite, use graph mode
           this.mode = 'graph';
-          console.log('🔍 Using RuVector GraphDatabase');
+          console.error('🔍 Using RuVector GraphDatabase');
         }
       } else {
         // Unknown extension, default to graph
@@ -97,11 +97,11 @@ export class UnifiedDatabase {
     } else {
       // New database - use graph mode (recommended)
       this.mode = 'graph';
-      console.log('✨ Creating new RuVector GraphDatabase');
+      console.error('✨ Creating new RuVector GraphDatabase');
 
       // Suggest .graph extension if not using it
       if (!dbPath.endsWith('.graph') && !dbPath.endsWith('.db')) {
-        console.log('💡 Tip: Use .graph extension for clarity (e.g., agentdb.graph)');
+        console.error('💡 Tip: Use .graph extension for clarity (e.g., agentdb.graph)');
       }
     }
 
@@ -123,11 +123,11 @@ export class UnifiedDatabase {
       this.graphDb = new GraphDatabaseAdapter(config, embedder);
       await this.graphDb.initialize();
 
-      console.log('✅ RuVector GraphDatabase ready (Primary Mode)');
-      console.log('   - Cypher queries enabled');
-      console.log('   - Hypergraph support active');
-      console.log('   - ACID transactions available');
-      console.log('   - 131K+ ops/sec batch inserts');
+      console.error('✅ RuVector GraphDatabase ready (Primary Mode)');
+      console.error('   - Cypher queries enabled');
+      console.error('   - Hypergraph support active');
+      console.error('   - ACID transactions available');
+      console.error('   - 131K+ ops/sec batch inserts');
     } else {
       // Use legacy SQLite — db-fallback prefers native better-sqlite3 when
       // loadable and falls back to sql.js (WASM) otherwise (ruflo #2235 A).
@@ -135,10 +135,10 @@ export class UnifiedDatabase {
       this.sqliteDb = await createDatabase(this.config.path);
       const info = getDatabaseInfo();
 
-      console.log(`⚠️  Using legacy SQLite mode (${info.implementation})`);
-      console.log('   - Limited to SQL queries');
-      console.log('   - No hypergraph support');
-      console.log('   - Consider migration to GraphDatabase');
+      console.error(`⚠️  Using legacy SQLite mode (${info.implementation})`);
+      console.error('   - Limited to SQL queries');
+      console.error('   - No hypergraph support');
+      console.error('   - Consider migration to GraphDatabase');
     }
   }
 
@@ -161,7 +161,7 @@ export class UnifiedDatabase {
    * Migrate SQLite database to RuVector GraphDatabase
    */
   private async migrateSQLiteToGraph(sqlitePath: string, embedder: any): Promise<void> {
-    console.log('🔄 Starting migration from SQLite to RuVector Graph...');
+    console.error('🔄 Starting migration from SQLite to RuVector Graph...');
 
     const startTime = Date.now();
 
@@ -181,7 +181,7 @@ export class UnifiedDatabase {
     await graphDb.initialize();
 
     // Migrate episodes
-    console.log('   📦 Migrating episodes...');
+    console.error('   📦 Migrating episodes...');
     const episodes = sqliteDb.prepare('SELECT * FROM episodes').all();
 
     for (const ep of episodes) {
@@ -203,10 +203,10 @@ export class UnifiedDatabase {
         latencyMs: ep.latency_ms
       }, embedding);
     }
-    console.log(`   ✅ Migrated ${episodes.length} episodes`);
+    console.error(`   ✅ Migrated ${episodes.length} episodes`);
 
     // Migrate skills
-    console.log('   📦 Migrating skills...');
+    console.error('   📦 Migrating skills...');
     const skills = sqliteDb.prepare('SELECT * FROM skills').all();
 
     for (const skill of skills) {
@@ -225,10 +225,10 @@ export class UnifiedDatabase {
         tags: skill.tags
       }, embedding);
     }
-    console.log(`   ✅ Migrated ${skills.length} skills`);
+    console.error(`   ✅ Migrated ${skills.length} skills`);
 
     // Migrate causal edges
-    console.log('   📦 Migrating causal relationships...');
+    console.error('   📦 Migrating causal relationships...');
     const edges = sqliteDb.prepare('SELECT * FROM causal_edges').all();
 
     for (const edge of edges) {
@@ -244,13 +244,13 @@ export class UnifiedDatabase {
         sampleSize: edge.sample_size
       }, embedding);
     }
-    console.log(`   ✅ Migrated ${edges.length} causal edges`);
+    console.error(`   ✅ Migrated ${edges.length} causal edges`);
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-    console.log(`\n🎉 Migration complete in ${duration}s!`);
-    console.log(`   Old SQLite: ${sqlitePath}`);
-    console.log(`   New Graph: ${graphPath}`);
-    console.log(`\n💡 Backup your SQLite file and update path to use .graph`);
+    console.error(`\n🎉 Migration complete in ${duration}s!`);
+    console.error(`   Old SQLite: ${sqlitePath}`);
+    console.error(`   New Graph: ${graphPath}`);
+    console.error(`\n💡 Backup your SQLite file and update path to use .graph`);
 
     // Close SQLite
     sqliteDb.close();

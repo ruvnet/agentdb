@@ -87,7 +87,7 @@ function getJWTSecret(): string {
   if (!secret) {
     throw new Error(
       'JWT_SECRET environment variable is not set. ' +
-      'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(64).toString(\'base64\'))"'
+      'Generate one with: node -e "console.error(require(\'crypto\').randomBytes(64).toString(\'base64\'))"'
     );
   }
 

@@ -96,14 +96,14 @@ export class QUICServer {
    */
   async start(): Promise<void> {
     if (this.isRunning) {
-      console.log(chalk.yellow('⚠️  QUIC server is already running'));
+      console.error(chalk.yellow('⚠️  QUIC server is already running'));
       return;
     }
 
     try {
-      console.log(chalk.blue('🚀 Starting QUIC server...'));
-      console.log(chalk.gray(`   Host: ${this.config.host}`));
-      console.log(chalk.gray(`   Port: ${this.config.port}`));
+      console.error(chalk.blue('🚀 Starting QUIC server...'));
+      console.error(chalk.gray(`   Host: ${this.config.host}`));
+      console.error(chalk.gray(`   Port: ${this.config.port}`));
 
       // Note: Actual QUIC implementation would use a library like @fails-components/webtransport
       // or node-quic. This is a reference implementation showing the interface.
@@ -112,9 +112,9 @@ export class QUICServer {
       this.isRunning = true;
       this.startCleanupInterval();
 
-      console.log(chalk.green('✓ QUIC server started successfully'));
-      console.log(chalk.gray(`  Max connections: ${this.config.maxConnections}`));
-      console.log(chalk.gray(`  Rate limit: ${this.config.rateLimit.maxRequestsPerMinute} req/min`));
+      console.error(chalk.green('✓ QUIC server started successfully'));
+      console.error(chalk.gray(`  Max connections: ${this.config.maxConnections}`));
+      console.error(chalk.gray(`  Rate limit: ${this.config.rateLimit.maxRequestsPerMinute} req/min`));
     } catch (error) {
       const err = error as Error;
       console.error(chalk.red('✗ Failed to start QUIC server:'), err.message);
@@ -127,16 +127,16 @@ export class QUICServer {
    */
   async stop(): Promise<void> {
     if (!this.isRunning) {
-      console.log(chalk.yellow('⚠️  QUIC server is not running'));
+      console.error(chalk.yellow('⚠️  QUIC server is not running'));
       return;
     }
 
     try {
-      console.log(chalk.blue('🛑 Stopping QUIC server...'));
+      console.error(chalk.blue('🛑 Stopping QUIC server...'));
 
       // Close all connections
       for (const [clientId, connection] of this.connections.entries()) {
-        console.log(chalk.gray(`  Closing connection: ${clientId}`));
+        console.error(chalk.gray(`  Closing connection: ${clientId}`));
         // Close connection logic here
       }
       this.connections.clear();
@@ -155,7 +155,7 @@ export class QUICServer {
       }
 
       this.isRunning = false;
-      console.log(chalk.green('✓ QUIC server stopped successfully'));
+      console.error(chalk.green('✓ QUIC server stopped successfully'));
     } catch (error) {
       const err = error as Error;
       console.error(chalk.red('✗ Error stopping QUIC server:'), err.message);
@@ -169,7 +169,7 @@ export class QUICServer {
   private async handleConnection(clientId: string, address: string): Promise<boolean> {
     // Check max connections
     if (this.connections.size >= this.config.maxConnections) {
-      console.log(chalk.yellow(`⚠️  Max connections reached, rejecting ${clientId}`));
+      console.error(chalk.yellow(`⚠️  Max connections reached, rejecting ${clientId}`));
       return false;
     }
 
@@ -184,8 +184,8 @@ export class QUICServer {
     };
 
     this.connections.set(clientId, connection);
-    console.log(chalk.green(`✓ Client connected: ${clientId} from ${address}`));
-    console.log(chalk.gray(`  Active connections: ${this.connections.size}`));
+    console.error(chalk.green(`✓ Client connected: ${clientId} from ${address}`));
+    console.error(chalk.gray(`  Active connections: ${this.connections.size}`));
 
     return true;
   }
@@ -196,7 +196,7 @@ export class QUICServer {
   private authenticate(clientId: string, authToken: string): boolean {
     // A server without a token rejects everyone rather than accepting everyone
     if (!this.config.authToken || typeof authToken !== 'string' || authToken.length === 0) {
-      console.log(chalk.red(`✗ Authentication failed for client: ${clientId}`));
+      console.error(chalk.red(`✗ Authentication failed for client: ${clientId}`));
       return false;
     }
 
@@ -205,7 +205,7 @@ export class QUICServer {
     // Constant-time compare; a length mismatch still fails without early exit on content
     const isValid = given.length === expected.length && timingSafeEqual(given, expected);
     if (!isValid) {
-      console.log(chalk.red(`✗ Authentication failed for client: ${clientId}`));
+      console.error(chalk.red(`✗ Authentication failed for client: ${clientId}`));
     }
     return isValid;
   }
@@ -229,12 +229,12 @@ export class QUICServer {
 
     // Check limits
     if (state.requestCount >= this.config.rateLimit.maxRequestsPerMinute) {
-      console.log(chalk.yellow(`⚠️  Rate limit exceeded (requests) for ${clientId}`));
+      console.error(chalk.yellow(`⚠️  Rate limit exceeded (requests) for ${clientId}`));
       return false;
     }
 
     if (state.bytesTransferred + requestSize > this.config.rateLimit.maxBytesPerMinute) {
-      console.log(chalk.yellow(`⚠️  Rate limit exceeded (bytes) for ${clientId}`));
+      console.error(chalk.yellow(`⚠️  Rate limit exceeded (bytes) for ${clientId}`));
       return false;
     }
 
@@ -279,9 +279,9 @@ export class QUICServer {
         connection.lastRequestAt = Date.now();
       }
 
-      console.log(chalk.blue(`📥 Processing sync request from ${clientId}`));
-      console.log(chalk.gray(`   Type: ${request.type}`));
-      console.log(chalk.gray(`   Since: ${request.since || 'full sync'}`));
+      console.error(chalk.blue(`📥 Processing sync request from ${clientId}`));
+      console.error(chalk.gray(`   Type: ${request.type}`));
+      console.error(chalk.gray(`   Since: ${request.since || 'full sync'}`));
 
       // Process based on type
       let data: any;
@@ -311,7 +311,7 @@ export class QUICServer {
           };
       }
 
-      console.log(chalk.green(`✓ Sync completed: ${count} items sent`));
+      console.error(chalk.green(`✓ Sync completed: ${count} items sent`));
 
       return {
         success: true,
@@ -466,7 +466,7 @@ export class QUICServer {
 
       for (const [clientId, connection] of this.connections.entries()) {
         if (now - connection.lastRequestAt > staleThreshold && connection.requestCount > 0) {
-          console.log(chalk.gray(`🧹 Removing stale connection: ${clientId}`));
+          console.error(chalk.gray(`🧹 Removing stale connection: ${clientId}`));
           this.connections.delete(clientId);
           this.rateLimitState.delete(clientId);
         }

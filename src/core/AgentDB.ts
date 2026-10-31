@@ -90,7 +90,7 @@ export class AgentDB {
 
     this.initialized = true;
 
-    console.log(`[AgentDB] Initialized with ${this.usingWasm ? 'sql.js WASM' : 'better-sqlite3'} + ${this.vectorBackend.name} vector backend`);
+    console.error(`[AgentDB] Initialized with ${this.usingWasm ? 'sql.js WASM' : 'better-sqlite3'} + ${this.vectorBackend.name} vector backend`);
   }
 
   /**
@@ -113,7 +113,7 @@ export class AgentDB {
       return db as unknown as IDatabaseConnection;
     } catch (error) {
       // better-sqlite3 not available or failed, try sql.js WASM
-      console.log('[AgentDB] better-sqlite3 not available, using sql.js WASM');
+      console.error('[AgentDB] better-sqlite3 not available, using sql.js WASM');
       return this.initializeSqlJsWasm(dbPath);
     }
   }

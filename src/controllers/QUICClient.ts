@@ -114,14 +114,14 @@ export class QUICClient {
    */
   async connect(): Promise<void> {
     if (this.isConnected) {
-      console.log(chalk.yellow('⚠️  Client already connected'));
+      console.error(chalk.yellow('⚠️  Client already connected'));
       return;
     }
 
     try {
-      console.log(chalk.blue('🔌 Connecting to QUIC server...'));
-      console.log(chalk.gray(`   Host: ${this.config.serverHost}`));
-      console.log(chalk.gray(`   Port: ${this.config.serverPort}`));
+      console.error(chalk.blue('🔌 Connecting to QUIC server...'));
+      console.error(chalk.gray(`   Host: ${this.config.serverHost}`));
+      console.error(chalk.gray(`   Port: ${this.config.serverPort}`));
 
       // Note: Actual QUIC implementation would use a library like @fails-components/webtransport
       // or node-quic. This is a reference implementation showing the interface.
@@ -141,8 +141,8 @@ export class QUICClient {
       this.isConnected = true;
       this.retryCount = 0;
 
-      console.log(chalk.green('✓ Connected to QUIC server'));
-      console.log(chalk.gray(`  Connection pool size: ${this.config.poolSize}`));
+      console.error(chalk.green('✓ Connected to QUIC server'));
+      console.error(chalk.gray(`  Connection pool size: ${this.config.poolSize}`));
     } catch (error) {
       const err = error as Error;
       console.error(chalk.red('✗ Connection failed:'), err.message);
@@ -155,22 +155,22 @@ export class QUICClient {
    */
   async disconnect(): Promise<void> {
     if (!this.isConnected) {
-      console.log(chalk.yellow('⚠️  Client not connected'));
+      console.error(chalk.yellow('⚠️  Client not connected'));
       return;
     }
 
     try {
-      console.log(chalk.blue('🔌 Disconnecting from QUIC server...'));
+      console.error(chalk.blue('🔌 Disconnecting from QUIC server...'));
 
       // Close all connections in pool
       for (const [connId, conn] of this.connectionPool.entries()) {
-        console.log(chalk.gray(`  Closing connection: ${connId}`));
+        console.error(chalk.gray(`  Closing connection: ${connId}`));
         // Close connection logic here
       }
       this.connectionPool.clear();
 
       this.isConnected = false;
-      console.log(chalk.green('✓ Disconnected from QUIC server'));
+      console.error(chalk.green('✓ Disconnected from QUIC server'));
     } catch (error) {
       const err = error as Error;
       console.error(chalk.red('✗ Disconnect error:'), err.message);
@@ -198,10 +198,10 @@ export class QUICClient {
       // Get connection from pool
       const connection = await this.acquireConnection();
 
-      console.log(chalk.blue('📤 Sending sync request...'));
-      console.log(chalk.gray(`   Type: ${options.type}`));
-      console.log(chalk.gray(`   Since: ${options.since || 'full sync'}`));
-      console.log(chalk.gray(`   Connection: ${connection.id}`));
+      console.error(chalk.blue('📤 Sending sync request...'));
+      console.error(chalk.gray(`   Type: ${options.type}`));
+      console.error(chalk.gray(`   Since: ${options.since || 'full sync'}`));
+      console.error(chalk.gray(`   Connection: ${connection.id}`));
 
       // Report progress: syncing
       options.onProgress?.({
@@ -237,10 +237,10 @@ export class QUICClient {
 
       const durationMs = Date.now() - startTime;
 
-      console.log(chalk.green('✓ Sync completed successfully'));
-      console.log(chalk.gray(`  Items received: ${response.count}`));
-      console.log(chalk.gray(`  Bytes transferred: ${bytesTransferred}`));
-      console.log(chalk.gray(`  Duration: ${durationMs}ms`));
+      console.error(chalk.green('✓ Sync completed successfully'));
+      console.error(chalk.gray(`  Items received: ${response.count}`));
+      console.error(chalk.gray(`  Bytes transferred: ${bytesTransferred}`));
+      console.error(chalk.gray(`  Duration: ${durationMs}ms`));
 
       // Report progress: completed
       options.onProgress?.({
@@ -300,8 +300,8 @@ export class QUICClient {
 
       if (attempt < this.config.maxRetries) {
         const delay = this.config.retryDelayMs * Math.pow(2, attempt);
-        console.log(chalk.yellow(`⚠️  Request failed, retrying in ${delay}ms (attempt ${attempt + 1}/${this.config.maxRetries})`));
-        console.log(chalk.gray(`   Error: ${err.message}`));
+        console.error(chalk.yellow(`⚠️  Request failed, retrying in ${delay}ms (attempt ${attempt + 1}/${this.config.maxRetries})`));
+        console.error(chalk.gray(`   Error: ${err.message}`));
 
         await this.sleep(delay);
         return this.sendWithRetry(connection, request, attempt + 1);
@@ -410,7 +410,7 @@ export class QUICClient {
 
       const latencyMs = Date.now() - startTime;
 
-      console.log(chalk.green(`✓ Ping successful: ${latencyMs}ms`));
+      console.error(chalk.green(`✓ Ping successful: ${latencyMs}ms`));
 
       return {
         success: true,
@@ -454,11 +454,11 @@ export class QUICClient {
       // Get connection from pool
       const connection = await this.acquireConnection();
 
-      console.log(chalk.blue('📤 Pushing data to remote...'));
-      console.log(chalk.gray(`   Type: ${options.type}`));
-      console.log(chalk.gray(`   Items: ${options.data.length}`));
-      console.log(chalk.gray(`   Batch size: ${batchSize}`));
-      console.log(chalk.gray(`   Connection: ${connection.id}`));
+      console.error(chalk.blue('📤 Pushing data to remote...'));
+      console.error(chalk.gray(`   Type: ${options.type}`));
+      console.error(chalk.gray(`   Items: ${options.data.length}`));
+      console.error(chalk.gray(`   Batch size: ${batchSize}`));
+      console.error(chalk.gray(`   Connection: ${connection.id}`));
 
       // Calculate total batches
       const totalBatches = Math.ceil(options.data.length / batchSize);
@@ -497,17 +497,17 @@ export class QUICClient {
             bytesTransferred += batchBytes;
             itemsPushed += batch.length;
 
-            console.log(chalk.gray(`  Batch ${batchIndex + 1}/${totalBatches}: ${batch.length} items pushed (${batchBytes} bytes)`));
+            console.error(chalk.gray(`  Batch ${batchIndex + 1}/${totalBatches}: ${batch.length} items pushed (${batchBytes} bytes)`));
           } else {
             // Track failed items from this batch
             failedItems.push(...batch.map(item => ({ item, error: response.error || 'Push failed' })));
-            console.log(chalk.yellow(`  Batch ${batchIndex + 1}/${totalBatches}: Failed - ${response.error || 'Unknown error'}`));
+            console.error(chalk.yellow(`  Batch ${batchIndex + 1}/${totalBatches}: Failed - ${response.error || 'Unknown error'}`));
           }
         } catch (batchError) {
           const err = batchError as Error;
           // Track failed items from this batch
           failedItems.push(...batch.map(item => ({ item, error: err.message })));
-          console.log(chalk.yellow(`  Batch ${batchIndex + 1}/${totalBatches}: Error - ${err.message}`));
+          console.error(chalk.yellow(`  Batch ${batchIndex + 1}/${totalBatches}: Error - ${err.message}`));
         }
       }
 
@@ -524,12 +524,12 @@ export class QUICClient {
 
       const durationMs = Date.now() - startTime;
 
-      console.log(chalk.green('✓ Push completed'));
-      console.log(chalk.gray(`  Items pushed: ${itemsPushed}/${options.data.length}`));
-      console.log(chalk.gray(`  Bytes transferred: ${bytesTransferred}`));
-      console.log(chalk.gray(`  Duration: ${durationMs}ms`));
+      console.error(chalk.green('✓ Push completed'));
+      console.error(chalk.gray(`  Items pushed: ${itemsPushed}/${options.data.length}`));
+      console.error(chalk.gray(`  Bytes transferred: ${bytesTransferred}`));
+      console.error(chalk.gray(`  Duration: ${durationMs}ms`));
       if (failedItems.length > 0) {
-        console.log(chalk.yellow(`  Failed items: ${failedItems.length}`));
+        console.error(chalk.yellow(`  Failed items: ${failedItems.length}`));
       }
 
       // Report progress: completed

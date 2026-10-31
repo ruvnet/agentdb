@@ -529,7 +529,7 @@ export function validateVectorCount(count: number): void {
  */
 export function safeLog(message: string, data?: any): void {
   if (!data) {
-    console.log(message);
+    console.error(message);
     return;
   }
 
@@ -549,8 +549,8 @@ export function safeLog(message: string, data?: any): void {
       safe.ids = `[${safe.ids.length} IDs...]`;
     }
 
-    console.log(message, safe);
+    console.error(message, safe);
   } else {
-    console.log(message, data);
+    console.error(message, data);
   }
 }

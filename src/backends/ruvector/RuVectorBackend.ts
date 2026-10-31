@@ -538,7 +538,7 @@ export class RuVectorBackend implements VectorBackendAsync {
         mmapModule = await (import(moduleName) as unknown as Promise<MmapModule>);
       } catch {
         // mmap-io not available, fall back to regular I/O
-        console.debug('[RuVectorBackend] mmap-io not available, using standard I/O');
+        console.error('[RuVectorBackend] mmap-io not available, using standard I/O');
         return;
       }
 
@@ -575,7 +575,7 @@ export class RuVectorBackend implements VectorBackendAsync {
 
       this.mmapEnabled = true;
     } catch (error) {
-      console.debug(`[RuVectorBackend] Failed to initialize mmap: ${(error as Error).message}`);
+      console.error(`[RuVectorBackend] Failed to initialize mmap: ${(error as Error).message}`);
       this.mmapEnabled = false;
     } finally {
       // Ensure file descriptor is closed even on error
@@ -1002,7 +1002,7 @@ export class RuVectorBackend implements VectorBackendAsync {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         // No metadata file - this is okay for backward compatibility
-        console.debug(`[RuVectorBackend] No metadata file found at ${metadataPath}`);
+        console.error(`[RuVectorBackend] No metadata file found at ${metadataPath}`);
       } else {
         throw error;
       }

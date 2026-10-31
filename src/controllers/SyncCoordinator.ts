@@ -113,12 +113,12 @@ export class SyncCoordinator {
     let bytesTransferred = 0;
 
     try {
-      console.log(chalk.blue('🔄 Starting synchronization...'));
+      console.error(chalk.blue('🔄 Starting synchronization...'));
 
       // Phase 1: Detect changes
       onProgress?.({ phase: 'detecting', current: 0, total: 100, message: 'Detecting changes...' });
       const changes = await this.detectChanges();
-      console.log(chalk.gray(`  Changes detected: ${changes.episodes.length + changes.skills.length + changes.edges.length} items`));
+      console.error(chalk.gray(`  Changes detected: ${changes.episodes.length + changes.skills.length + changes.edges.length} items`));
 
       // Phase 2: Push changes to remote
       if (changes.episodes.length > 0 || changes.skills.length > 0 || changes.edges.length > 0) {
@@ -157,11 +157,11 @@ export class SyncCoordinator {
       const endTime = Date.now();
       const durationMs = endTime - startTime;
 
-      console.log(chalk.green('✓ Synchronization completed'));
-      console.log(chalk.gray(`  Items pushed: ${itemsPushed}`));
-      console.log(chalk.gray(`  Items pulled: ${itemsPulled}`));
-      console.log(chalk.gray(`  Conflicts resolved: ${conflictsResolved}`));
-      console.log(chalk.gray(`  Duration: ${durationMs}ms`));
+      console.error(chalk.green('✓ Synchronization completed'));
+      console.error(chalk.gray(`  Items pushed: ${itemsPushed}`));
+      console.error(chalk.gray(`  Items pulled: ${itemsPulled}`));
+      console.error(chalk.gray(`  Conflicts resolved: ${conflictsResolved}`));
+      console.error(chalk.gray(`  Duration: ${durationMs}ms`));
 
       onProgress?.({ phase: 'completed', current: 100, total: 100, message: 'Sync completed' });
 
@@ -246,10 +246,10 @@ export class SyncCoordinator {
     const totalItems = changes.episodes.length + changes.skills.length + changes.edges.length;
 
     try {
-      console.log(chalk.blue('📤 Pushing changes to remote...'));
-      console.log(chalk.gray(`  Episodes: ${changes.episodes.length}`));
-      console.log(chalk.gray(`  Skills: ${changes.skills.length}`));
-      console.log(chalk.gray(`  Edges: ${changes.edges.length}`));
+      console.error(chalk.blue('📤 Pushing changes to remote...'));
+      console.error(chalk.gray(`  Episodes: ${changes.episodes.length}`));
+      console.error(chalk.gray(`  Skills: ${changes.skills.length}`));
+      console.error(chalk.gray(`  Edges: ${changes.edges.length}`));
 
       // Push episodes
       if (changes.episodes.length > 0) {
@@ -279,10 +279,10 @@ export class SyncCoordinator {
         if (episodesResult.success) {
           itemsPushed += episodesResult.itemsPushed;
           bytesTransferred += episodesResult.bytesTransferred;
-          console.log(chalk.gray(`  Episodes pushed: ${episodesResult.itemsPushed}`));
+          console.error(chalk.gray(`  Episodes pushed: ${episodesResult.itemsPushed}`));
         } else {
           errors.push(`Episodes push failed: ${episodesResult.error || 'Unknown error'}`);
-          console.log(chalk.yellow(`  Episodes push failed: ${episodesResult.error}`));
+          console.error(chalk.yellow(`  Episodes push failed: ${episodesResult.error}`));
         }
       }
 
@@ -314,10 +314,10 @@ export class SyncCoordinator {
         if (skillsResult.success) {
           itemsPushed += skillsResult.itemsPushed;
           bytesTransferred += skillsResult.bytesTransferred;
-          console.log(chalk.gray(`  Skills pushed: ${skillsResult.itemsPushed}`));
+          console.error(chalk.gray(`  Skills pushed: ${skillsResult.itemsPushed}`));
         } else {
           errors.push(`Skills push failed: ${skillsResult.error || 'Unknown error'}`);
-          console.log(chalk.yellow(`  Skills push failed: ${skillsResult.error}`));
+          console.error(chalk.yellow(`  Skills push failed: ${skillsResult.error}`));
         }
       }
 
@@ -349,14 +349,14 @@ export class SyncCoordinator {
         if (edgesResult.success) {
           itemsPushed += edgesResult.itemsPushed;
           bytesTransferred += edgesResult.bytesTransferred;
-          console.log(chalk.gray(`  Edges pushed: ${edgesResult.itemsPushed}`));
+          console.error(chalk.gray(`  Edges pushed: ${edgesResult.itemsPushed}`));
         } else {
           errors.push(`Edges push failed: ${edgesResult.error || 'Unknown error'}`);
-          console.log(chalk.yellow(`  Edges push failed: ${edgesResult.error}`));
+          console.error(chalk.yellow(`  Edges push failed: ${edgesResult.error}`));
         }
       }
 
-      console.log(chalk.green(`✓ Push completed: ${itemsPushed} items, ${bytesTransferred} bytes`));
+      console.error(chalk.green(`✓ Push completed: ${itemsPushed} items, ${bytesTransferred} bytes`));
     } catch (error) {
       const err = error as Error;
       errors.push(err.message);
@@ -669,7 +669,7 @@ export class SyncCoordinator {
       return;
     }
 
-    console.log(chalk.blue(`🔄 Auto-sync enabled (interval: ${this.config.syncIntervalMs}ms)`));
+    console.error(chalk.blue(`🔄 Auto-sync enabled (interval: ${this.config.syncIntervalMs}ms)`));
 
     this.autoSyncInterval = setInterval(async () => {
       try {
@@ -690,7 +690,7 @@ export class SyncCoordinator {
     if (this.autoSyncInterval) {
       clearInterval(this.autoSyncInterval);
       this.autoSyncInterval = null;
-      console.log(chalk.blue('🔄 Auto-sync disabled'));
+      console.error(chalk.blue('🔄 Auto-sync disabled'));
     }
   }
 

@@ -1101,7 +1101,7 @@ export class ReflexionMemory {
     }
 
     const result = await this.learningBackend.train(options);
-    console.log('[ReflexionMemory] GNN training complete:', {
+    console.error('[ReflexionMemory] GNN training complete:', {
       epochs: result.epochs,
       finalLoss: result.finalLoss.toFixed(4),
       improvement: `${(result.improvement * 100).toFixed(1)}%`,

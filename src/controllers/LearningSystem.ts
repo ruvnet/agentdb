@@ -174,7 +174,7 @@ export class LearningSystem {
     // Cache in memory
     this.activeSessions.set(sessionId, session);
 
-    console.log(`✅ Learning session started: ${sessionId} (${sessionType})`);
+    console.error(`✅ Learning session started: ${sessionId} (${sessionType})`);
     return sessionId;
   }
 
@@ -211,7 +211,7 @@ export class LearningSystem {
     // Remove from active sessions
     this.activeSessions.delete(sessionId);
 
-    console.log(`✅ Learning session ended: ${sessionId} (duration: ${endTime - session.startTime}ms)`);
+    console.error(`✅ Learning session ended: ${sessionId} (duration: ${endTime - session.startTime}ms)`);
   }
 
   /**
@@ -299,7 +299,7 @@ export class LearningSystem {
     // Update policy incrementally based on algorithm
     await this.updatePolicyIncremental(session, feedback);
 
-    console.log(`✅ Feedback recorded: session=${feedback.sessionId}, action=${feedback.action}, reward=${feedback.reward}`);
+    console.error(`✅ Feedback recorded: session=${feedback.sessionId}, action=${feedback.action}, reward=${feedback.reward}`);
   }
 
   /**
@@ -357,7 +357,7 @@ export class LearningSystem {
 
       // Log progress
       if ((epoch + 1) % 10 === 0) {
-        console.log(`  Epoch ${epoch + 1}/${epochs} - Loss: ${(totalLoss / batchCount).toFixed(4)}`);
+        console.error(`  Epoch ${epoch + 1}/${epochs} - Loss: ${(totalLoss / batchCount).toFixed(4)}`);
       }
     }
 
@@ -372,7 +372,7 @@ export class LearningSystem {
     // Calculate convergence rate
     const convergenceRate = this.calculateConvergenceRate(sessionId);
 
-    console.log(`✅ Training completed: ${epochs} epochs, ${trainingTimeMs}ms`);
+    console.error(`✅ Training completed: ${epochs} epochs, ${trainingTimeMs}ms`);
 
     return {
       epochsCompleted: epochs,
@@ -1222,7 +1222,7 @@ export class LearningSystem {
       })
     );
 
-    console.log(`✅ Experience recorded: tool=${toolName}, reward=${reward}, success=${success}`);
+    console.error(`✅ Experience recorded: tool=${toolName}, reward=${reward}, success=${success}`);
     return result.lastInsertRowid as number;
   }
 

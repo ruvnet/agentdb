@@ -98,7 +98,7 @@ export class AttentionWASMManager {
       // Try to import @ruvector/attention (NAPI bindings)
       // @ts-expect-error - Optional dependency
       this.napiModule = await import('@ruvector/attention');
-      console.log('✅ Loaded @ruvector/attention NAPI module');
+      console.error('✅ Loaded @ruvector/attention NAPI module');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.warn(`⚠️  Failed to load @ruvector/attention: ${errorMessage}`);
@@ -117,7 +117,7 @@ export class AttentionWASMManager {
     // Check cache first (optimization: 2-5s → <10ms)
     if (wasmInstanceCache.has(cacheKey)) {
       this.wasmModule = wasmInstanceCache.get(cacheKey)!;
-      console.log('✅ Loaded WASM from cache (<10ms)');
+      console.error('✅ Loaded WASM from cache (<10ms)');
       return;
     }
 
@@ -137,7 +137,7 @@ export class AttentionWASMManager {
       this.wasmModule = mod as unknown as WASMAttentionModule;
       wasmInstanceCache.set(cacheKey, mod as unknown as WASMAttentionModule);
 
-      console.log('✅ Loaded and cached WASM module');
+      console.error('✅ Loaded and cached WASM module');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.warn(`⚠️  Failed to load ruvector-attention-wasm: ${errorMessage}`);

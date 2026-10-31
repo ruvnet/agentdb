@@ -97,7 +97,7 @@ export class SparsificationService {
       const napi = await import(/* @vite-ignore */ napiModuleName).catch(() => null);
       if (napi) {
         this.napiModule = napi;
-        console.log('✅ SparsificationService: Loaded @ruvector/sparsifier NAPI module');
+        console.error('✅ SparsificationService: Loaded @ruvector/sparsifier NAPI module');
       } else {
         // Fall back to WASM
         const wasmModuleName = 'ruvector-sparsifier-wasm';
@@ -105,7 +105,7 @@ export class SparsificationService {
         if (wasm) {
           await wasm.default();
           this.wasmModule = wasm;
-          console.log('✅ SparsificationService: Loaded ruvector-sparsifier-wasm module');
+          console.error('✅ SparsificationService: Loaded ruvector-sparsifier-wasm module');
         } else {
           console.warn('⚠️  SparsificationService: No native bindings available, using JavaScript fallback');
         }

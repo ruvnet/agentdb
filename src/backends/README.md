@@ -168,7 +168,7 @@ import { detectBackends } from '@agentdb/backends';
 
 const detection = await detectBackends();
 
-console.log(detection);
+console.error(detection);
 // {
 //   available: 'ruvector',
 //   ruvector: {
@@ -275,7 +275,7 @@ learning.addSample({ embedding: query, label: 1, weight: 0.9 });
 
 // Train model
 const result = await learning.train({ epochs: 50 });
-console.log(`Loss: ${result.finalLoss}, Improvement: ${result.improvement}%`);
+console.error(`Loss: ${result.finalLoss}, Improvement: ${result.improvement}%`);
 ```
 
 ### Graph Queries
@@ -325,9 +325,9 @@ console.timeEnd('search');
 
 // Stats
 const stats = backend.getStats();
-console.log(`Backend: ${stats.backend}`);
-console.log(`Vectors: ${stats.count}`);
-console.log(`Memory: ${(stats.memoryUsage / 1024 / 1024).toFixed(2)} MB`);
+console.error(`Backend: ${stats.backend}`);
+console.error(`Vectors: ${stats.count}`);
+console.error(`Memory: ${(stats.memoryUsage / 1024 / 1024).toFixed(2)} MB`);
 // RuVector: ~15MB, HNSWLib: ~45MB
 ```
 
