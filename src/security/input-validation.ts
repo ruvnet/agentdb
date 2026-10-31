@@ -61,6 +61,7 @@ const ALLOWED_PRAGMAS = new Set([
   'temp_store',
   'mmap_size',
   'wal_autocheckpoint',
+  'table_info',
 ]);
 
 /**
@@ -384,8 +385,20 @@ export function validatePragmaCommand(pragma: string): string {
     throw new ValidationError('PRAGMA command must be a non-empty string', 'INVALID_PRAGMA', 'pragma');
   }
 
-  // Extract the pragma name (before any = or space)
-  const pragmaName = pragma.trim().toLowerCase().split(/[=\s]/)[0];
+  // Match the whole command, not just its first token: "name", "name = value",
+  // or "table_info(identifier)". Anything else (e.g. a stacked "; DROP ...")
+  // is rejected.
+  const trimmed = pragma.trim();
+  const assignment = /^([a-z_]+)(\s*=\s*[A-Za-z0-9_-]+)?$/i.exec(trimmed);
+  const call = /^(table_info)\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\)$/i.exec(trimmed);
+  if (!assignment && !call) {
+    throw new ValidationError(
+      'Invalid PRAGMA command: expected "name", "name = value" or "table_info(table)"',
+      'INVALID_PRAGMA',
+      'pragma'
+    );
+  }
+  const pragmaName = (assignment ?? call)![1].toLowerCase();
 
   if (!ALLOWED_PRAGMAS.has(pragmaName)) {
     throw new ValidationError(
@@ -396,7 +409,7 @@ export function validatePragmaCommand(pragma: string): string {
   }
 
   // Return the full pragma for execution (e.g., "journal_mode = WAL")
-  return pragma.trim();
+  return trimmed;
 }
 
 /**

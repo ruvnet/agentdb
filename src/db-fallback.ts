@@ -481,9 +481,7 @@ function createSqlJsWrapper(SQL: any) {
         // SECURITY: Validate PRAGMA command against whitelist to prevent SQL injection
         const validatedPragma = validatePragmaCommand(pragma);
 
-        // Execute validated PRAGMA
-        const result = this.db.exec(`PRAGMA ${validatedPragma}`);
-        return result[0]?.values[0]?.[0];
+        return runPragma(this.db, validatedPragma);
       } catch (error) {
         if (error instanceof ValidationError) {
           console.error(`❌ Invalid PRAGMA command: ${error.message}`);
@@ -509,6 +507,26 @@ function createSqlJsWrapper(SQL: any) {
       };
     }
   };
+}
+
+/**
+ * Run one validated PRAGMA as a single prepared statement (exec() would run
+ * any stacked statements). table_info(...) returns its rows, like
+ * better-sqlite3; other pragmas return the first value.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- sql.js raw database
+function runPragma(rawDb: any, validatedPragma: string): unknown {
+  const stmt = rawDb.prepare(`PRAGMA ${validatedPragma}`);
+  try {
+    if (/^table_info\(/i.test(validatedPragma)) {
+      const rows: Record<string, unknown>[] = [];
+      while (stmt.step()) rows.push(stmt.getAsObject());
+      return rows;
+    }
+    return stmt.step() ? stmt.get()[0] : undefined;
+  } finally {
+    stmt.free();
+  }
 }
 
 /**
@@ -660,8 +678,7 @@ export function wrapExistingSqlJsDatabase(rawDb: any, filename: string = ':memor
     pragma(pragma: string, _options?: unknown) {
       try {
         const validatedPragma = validatePragmaCommand(pragma);
-        const result = rawDb.exec(`PRAGMA ${validatedPragma}`);
-        return result[0]?.values[0]?.[0];
+        return runPragma(rawDb, validatedPragma);
       } catch (error) {
         if (error instanceof ValidationError) {
           console.error(`Invalid PRAGMA command: ${error.message}`);
