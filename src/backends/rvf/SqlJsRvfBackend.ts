@@ -37,9 +37,12 @@ import {
 } from './validation.js';
 import {
   cosineSimilaritySIMD,
+  cosineSimilarityWithNormsSIMD,
+  squaredNormSIMD,
   euclideanDistanceSIMD,
   dotProductSIMD,
 } from '../../simd/simd-vector-ops.js';
+import { TopK } from '../../utils/top-k.js';
 import {
   captureDatabaseFileState,
   loadSqlJsDatabaseFile,
@@ -51,6 +54,8 @@ import {
 interface CacheEntry {
   embedding: Float32Array;
   metadata?: Record<string, unknown>;
+  /** squaredNormSIMD(embedding), computed once at insert/load (ADR-015) */
+  normSq: number;
 }
 
 // ─── MEMFS leak safety net (closes ruflo#2432 class) ────────────────────────
@@ -455,7 +460,8 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
       if (metaStr) {
         try { metadata = JSON.parse(metaStr); } catch { /* skip bad metadata */ }
       }
-      this.cache.set(id, { embedding: new Float32Array(embedding), metadata });
+      const copy = new Float32Array(embedding);
+      this.cache.set(id, { embedding: copy, metadata, normSq: squaredNormSIMD(copy) });
     }
   }
 
@@ -473,7 +479,8 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
       this.upsertStmt = this.db.prepare(sql);
       this.upsertStmt.run([id, blob, metaStr]);
     }
-    this.cache.set(id, { embedding: new Float32Array(vec), metadata });
+    const copy = new Float32Array(vec);
+    this.cache.set(id, { embedding: copy, metadata, normSq: squaredNormSIMD(copy) });
   }
 
   private flushSync(): void {
@@ -502,24 +509,30 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
     }
 
     const threshold = options?.threshold ?? 0;
-    const results: SearchResult[] = [];
+    // Bounded top-k: cosine reuses each entry's cached norm and the query's
+    // norm, and result objects are built for the winners only. Scores and
+    // order match the old push/sort/slice (ties keep insertion order).
+    const queryNormSq = this.metricType === 'cosine' ? squaredNormSIMD(queryVec) : 0;
+    const top = new TopK<[string, CacheEntry]>(safeK);
 
-    for (const [id, entry] of this.cache) {
+    for (const pair of this.cache) {
+      const entry = pair[1];
       // Apply metadata filter if provided
       if (options?.filter && !this.matchesFilter(entry.metadata, options.filter)) {
         continue;
       }
 
-      const { similarity, distance } = this.computeScore(queryVec, entry.embedding);
+      const similarity = this.metricType === 'cosine'
+        ? cosineSimilarityWithNormsSIMD(queryVec, entry.embedding, queryNormSq, entry.normSq)
+        : this.computeScore(queryVec, entry.embedding).similarity;
 
-      if (similarity >= threshold) {
-        results.push({ id, distance, similarity, metadata: entry.metadata });
-      }
+      if (similarity >= threshold) top.push(similarity, pair);
     }
 
-    // Sort by similarity descending
-    results.sort((a, b) => b.similarity - a.similarity);
-    return results.slice(0, safeK);
+    return top.sorted().map(({ item: [id, entry] }) => {
+      const { similarity, distance } = this.computeScore(queryVec, entry.embedding);
+      return { id, distance, similarity, metadata: entry.metadata };
+    });
   }
 
   private computeScore(query: Float32Array, candidate: Float32Array): { similarity: number; distance: number } {

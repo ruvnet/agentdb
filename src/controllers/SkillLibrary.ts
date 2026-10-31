@@ -13,9 +13,11 @@ import { normalizeRowId } from '../types/database.types.js';
 import { EmbeddingService } from './EmbeddingService.js';
 import { VectorBackend } from '../backends/VectorBackend.js';
 import { searchVectors } from '../backends/VectorBackend.js';
+import { sqlExactSource } from '../backends/ExactSearch.js';
 import type { GraphDatabaseAdapter } from '../backends/graph/GraphDatabaseAdapter.js';
 import { NodeIdMapper } from '../utils/NodeIdMapper.js';
 import { QueryCache, type QueryCacheConfig } from '../core/QueryCache.js';
+import { TopK, squaredNorm, cosineWithQueryNorm, blobToFloat32 } from '../utils/top-k.js';
 
 /** Vector ids this controller writes: "skill:<rowid>" */
 const SKILL_VECTOR_ID = /^skill:(\d+)$/;
@@ -194,6 +196,36 @@ export class SkillLibrary {
   }
 
   /**
+   * Record the outcome of using a skill (ADR-015). Updates uses, success
+   * rate and average reward, which retrieveSkills() ranks by; the average
+   * latency only moves when `latencyMs` is given.
+   *
+   * @param reward - defaults to 1 for success, 0 for failure
+   * @returns false when no skill has that id
+   */
+  recordOutcome(skillId: number, success: boolean, reward?: number, latencyMs?: number): boolean {
+    if (reward !== undefined && !Number.isFinite(reward)) {
+      throw new Error('reward must be a finite number');
+    }
+    if (latencyMs !== undefined && (!Number.isFinite(latencyMs) || latencyMs < 0)) {
+      throw new Error('latencyMs must be a non-negative finite number');
+    }
+    this.queryCache.invalidateCategory('skills');
+    const actualReward = reward ?? (success ? 1 : 0);
+    const result = this.db.prepare(`
+      UPDATE skills
+      SET
+        success_rate = (success_rate * uses + ?) / (uses + 1),
+        avg_reward = (avg_reward * uses + ?) / (uses + 1),
+        avg_latency_ms = CASE WHEN ? IS NULL THEN avg_latency_ms
+                              ELSE (avg_latency_ms * uses + ?) / (uses + 1) END,
+        uses = uses + 1
+      WHERE id = ?
+    `).run(success ? 1 : 0, actualReward, latencyMs ?? null, latencyMs ?? null, skillId);
+    return result.changes > 0;
+  }
+
+  /**
    * Retrieve skills relevant to a task
    */
   async searchSkills(query: SkillQuery): Promise<Skill[]> {
@@ -271,7 +303,20 @@ export class SkillLibrary {
 
     // Use VectorBackend for semantic search (if available)
     if (this.vectorBackend) {
-      const searchResults = await searchVectors(this.vectorBackend, queryEmbedding, k * 3);
+      // Small or short index answers are completed by exact cosine over
+      // skill_embeddings (ADR-015)
+      const searchResults = await searchVectors(
+        this.vectorBackend,
+        queryEmbedding,
+        k * 3,
+        undefined,
+        sqlExactSource(this.db, {
+          table: 'skill_embeddings',
+          idColumn: 'skill_id',
+          vectorId: (id) => `skill:${id}`,
+          owns: (hit) => SKILL_VECTOR_ID.test(hit.id),
+        })
+      );
 
       // The vector backend may be shared with other controllers (episodes use
       // bare numeric ids, causal edges "causal-edge:N"); only "skill:N" is ours.
@@ -353,42 +398,38 @@ export class SkillLibrary {
     `);
     const rows = stmt.all(minSuccessRate);
 
-    // Compute similarities
-    const skillsWithSimilarity: (Skill & { similarity: number })[] = [];
+    // Bounded top-k by composite score; JSON columns are parsed for the
+    // winners only. Ties keep scan order, as the old stable sort did.
+    const queryNorm = Math.sqrt(squaredNorm(queryEmbedding));
+    const top = new TopK<{ row: (typeof rows)[number]; similarity: number }>(k);
     for (const row of rows) {
       if (!row.embedding) continue;
 
-      const embedding = new Float32Array(
-        row.embedding.buffer,
-        row.embedding.byteOffset,
-        row.embedding.byteLength / 4
-      );
-      const similarity = this.cosineSimilarity(queryEmbedding, embedding);
-
-      skillsWithSimilarity.push({
-        id: row.id,
+      const similarity = cosineWithQueryNorm(queryEmbedding, queryNorm, blobToFloat32(row.embedding));
+      const score = this.computeSkillScore({
         name: row.name,
-        description: row.description ?? undefined,
-        signature: safeJsonParse(row.signature, undefined) as Skill["signature"],
-        code: row.code ?? undefined,
         successRate: row.success_rate,
         uses: row.uses,
         avgReward: row.avg_reward,
-        avgLatencyMs: row.avg_latency_ms,
-        createdFromEpisode: row.created_from_episode ?? undefined,
-        metadata: safeJsonParse(row.metadata, undefined),
         similarity,
       });
+      top.push(score, { row, similarity });
     }
 
-    // Sort by composite score
-    skillsWithSimilarity.sort((a, b) => {
-      const scoreA = this.computeSkillScore(a);
-      const scoreB = this.computeSkillScore(b);
-      return scoreB - scoreA;
-    });
-
-    return skillsWithSimilarity.slice(0, k);
+    return top.sorted().map(({ item: { row, similarity } }) => ({
+      id: row.id,
+      name: row.name,
+      description: row.description ?? undefined,
+      signature: safeJsonParse(row.signature, undefined) as Skill["signature"],
+      code: row.code ?? undefined,
+      successRate: row.success_rate,
+      uses: row.uses,
+      avgReward: row.avg_reward,
+      avgLatencyMs: row.avg_latency_ms,
+      createdFromEpisode: row.created_from_episode ?? undefined,
+      metadata: safeJsonParse(row.metadata, undefined),
+      similarity,
+    }));
   }
 
   /**

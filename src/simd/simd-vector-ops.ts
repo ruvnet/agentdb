@@ -379,6 +379,76 @@ export function cosineSimilaritySIMD(a: Float32Array, b: Float32Array): number {
 }
 
 /**
+ * Squared L2 norm accumulated in the same 8 lanes as cosineSimilaritySIMD,
+ * so cosineSimilarityWithNormsSIMD(a, b, squaredNormSIMD(a), squaredNormSIMD(b))
+ * is bit-identical to cosineSimilaritySIMD(a, b). Cache it per stored vector.
+ */
+export function squaredNormSIMD(v: Float32Array): number {
+  const len = v.length;
+  let n0 = 0, n1 = 0, n2 = 0, n3 = 0, n4 = 0, n5 = 0, n6 = 0, n7 = 0;
+  const loopEnd = len - (len % 8);
+  for (let i = 0; i < loopEnd; i += 8) {
+    const v0 = v[i], v1 = v[i + 1], v2 = v[i + 2], v3 = v[i + 3];
+    const v4 = v[i + 4], v5 = v[i + 5], v6 = v[i + 6], v7 = v[i + 7];
+    n0 += v0 * v0; n1 += v1 * v1; n2 += v2 * v2; n3 += v3 * v3;
+    n4 += v4 * v4; n5 += v5 * v5; n6 += v6 * v6; n7 += v7 * v7;
+  }
+  let rem = 0;
+  for (let i = loopEnd; i < len; i++) rem += v[i] * v[i];
+  return n0 + n1 + n2 + n3 + n4 + n5 + n6 + n7 + rem;
+}
+
+/**
+ * cosineSimilaritySIMD with both squared norms supplied (see squaredNormSIMD):
+ * only the dot product is computed per call. Same validation, guards and clamp.
+ */
+export function cosineSimilarityWithNormsSIMD(
+  a: Float32Array,
+  b: Float32Array,
+  normASq: number,
+  normBSq: number
+): number {
+  validateFloat32Array(a, 'First vector (a)');
+  validateFloat32Array(b, 'Second vector (b)');
+  const len = a.length;
+  if (len !== b.length) {
+    throw new Error(
+      `Vector length mismatch: ${len} vs ${b.length}. Vectors must have same dimension.`
+    );
+  }
+  validateDimension(len, 'Vector length');
+  if (len === 0) {
+    return 0;
+  }
+
+  let d0 = 0, d1 = 0, d2 = 0, d3 = 0, d4 = 0, d5 = 0, d6 = 0, d7 = 0;
+  const loopEnd = len - (len % 8);
+  for (let i = 0; i < loopEnd; i += 8) {
+    d0 += a[i] * b[i];
+    d1 += a[i + 1] * b[i + 1];
+    d2 += a[i + 2] * b[i + 2];
+    d3 += a[i + 3] * b[i + 3];
+    d4 += a[i + 4] * b[i + 4];
+    d5 += a[i + 5] * b[i + 5];
+    d6 += a[i + 6] * b[i + 6];
+    d7 += a[i + 7] * b[i + 7];
+  }
+  let dotRem = 0;
+  for (let i = loopEnd; i < len; i++) dotRem += a[i] * b[i];
+  const dotProduct = d0 + d1 + d2 + d3 + d4 + d5 + d6 + d7 + dotRem;
+
+  const denom = Math.sqrt(normASq * normBSq);
+  if (denom < EPSILON || !isValidNumber(denom)) {
+    return 0;
+  }
+  const similarity = dotProduct / denom;
+  if (!isValidNumber(similarity)) {
+    return 0;
+  }
+  return similarity > 1 ? 1 : similarity < -1 ? -1 : similarity;
+}
+
+/**
  * Calculate Euclidean (L2) distance with 8x loop unrolling
  *
  * Uses the same ILP optimization as cosine similarity.

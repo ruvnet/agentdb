@@ -13,7 +13,11 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 // Database type from db-fallback
 type Database = any;
-import { createDatabase } from '../db-fallback.js';
+import { createDatabase, getDatabaseInfo } from '../db-fallback.js';
+import { NativeAccelerator } from '../backends/rvf/NativeAccelerator.js';
+import { detectBackends } from '../backends/factory.js';
+import { DEFAULT_EXACT_SEARCH_THRESHOLD } from '../backends/VectorBackend.js';
+import { DEFAULT_RERANK_WEIGHTS } from '../controllers/ReasoningBank.js';
 import { CausalMemoryGraph } from '../controllers/CausalMemoryGraph.js';
 import { CausalRecall } from '../controllers/CausalRecall.js';
 import { ReflexionMemory } from '../controllers/ReflexionMemory.js';
@@ -56,6 +60,22 @@ const toolPolicy = buildMcpToolPolicy();
 // Request-size limits at the MCP boundary
 const MAX_INSERT_BATCH_ITEMS = 1000;
 const MAX_SEARCH_K = 100;
+const MAX_FEEDBACK_LATENCY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Outcome feedback at the MCP boundary (ADR-015): a boolean success, a reward
+ * in [0, 1], or both. A reward alone counts as a success when >= 0.5.
+ */
+function validateFeedback(args: Record<string, unknown> | undefined): { success: boolean; reward?: number } {
+  const hasReward = args?.reward !== undefined && args?.reward !== null;
+  const hasSuccess = args?.success !== undefined && args?.success !== null;
+  if (!hasReward && !hasSuccess) {
+    throw new ValidationError('success or reward is required', 'MISSING_REQUIRED_FIELD', 'success');
+  }
+  const reward = hasReward ? validateNumericRange(args!.reward, 'reward', 0, 1) : undefined;
+  const success = hasSuccess ? validateBoolean(args!.success, 'success') : reward! >= 0.5;
+  return { success, reward };
+}
 
 // stdout belongs exclusively to JSON-RPC when running over stdio. Route every
 // transitive diagnostic (including legacy controller console.log calls) to
@@ -289,6 +309,41 @@ const learningSystem = new LearningSystem(db, embeddingService);
 const batchOps = new BatchOperations(db, embeddingService);
 const reasoningBank = new ReasoningBank(db, embeddingService);
 const caches = new MCPToolCaches();
+
+// agentdb_capabilities: native probing is done once, on first request
+let acceleratorProbe: Promise<NativeAccelerator> | null = null;
+async function describeCapabilities(): Promise<Record<string, unknown>> {
+  acceleratorProbe ??= (async () => {
+    const accelerator = new NativeAccelerator();
+    await accelerator.initialize();
+    return accelerator;
+  })();
+  const [accelerator, detected] = await Promise.all([acceleratorProbe, detectBackends()]);
+  const exactThreshold = Number(process.env.AGENTDB_EXACT_SEARCH_THRESHOLD);
+  return {
+    nativeAccelerator: accelerator.capabilities(),
+    vectorBackend: {
+      // This server's controllers are built without a vector index: every
+      // search here is an exact cosine scan over the SQL embedding tables.
+      inUse: 'sql-exact-scan',
+      available: detected.available,
+      ruvector: detected.ruvector,
+      rvf: detected.rvf,
+      hnswlib: detected.hnswlib,
+      sqljsRvf: detected.sqljsRvf,
+      ruvectorBackendEnv: process.env.RUVECTOR_BACKEND ?? null,
+    },
+    sqlDriver: getDatabaseInfo(),
+    embedding: embeddingService.getRuntimeInfo(),
+    retrieval: {
+      exactSearchThreshold: Number.isFinite(exactThreshold) && exactThreshold >= 0
+        ? exactThreshold
+        : DEFAULT_EXACT_SEARCH_THRESHOLD,
+      patternRerankWeights: DEFAULT_RERANK_WEIGHTS,
+    },
+    mcpProfile: toolPolicy.profile,
+  };
+}
 
 // ============================================================================
 // MCP Server Setup
@@ -759,6 +814,41 @@ const tools = [
   {
     name: 'agentdb_pattern_stats',
     description: 'Get pattern statistics including total patterns, success rates, and top task types',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'agentdb_pattern_feedback',
+    description: 'Record the outcome of using a reasoning pattern. Updates its success rate and average reward, which agentdb_pattern_search ranks by (0.7 similarity + 0.2 success rate + 0.1 reward). Give success, reward, or both.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pattern_id: { type: 'integer', minimum: 0, description: 'Pattern ID from agentdb_pattern_store or agentdb_pattern_search' },
+        success: { type: 'boolean', description: 'Whether applying the pattern succeeded' },
+        reward: { type: 'number', minimum: 0, maximum: 1, description: 'Reward in [0, 1]; defaults to 1 for success, 0 for failure. A reward alone counts as success when >= 0.5' },
+      },
+      required: ['pattern_id'],
+    },
+  },
+  {
+    name: 'agentdb_skill_feedback',
+    description: 'Record the outcome of using a skill. Updates its uses, success rate, average reward and (optionally) latency, which skill_search ranks by. Give success, reward, or both.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        skill_id: { type: 'integer', minimum: 0, description: 'Skill ID from skill_create or skill_search' },
+        success: { type: 'boolean', description: 'Whether the skill succeeded' },
+        reward: { type: 'number', minimum: 0, maximum: 1, description: 'Reward in [0, 1]; defaults to 1 for success, 0 for failure. A reward alone counts as success when >= 0.5' },
+        latency_ms: { type: 'number', minimum: 0, description: 'Observed latency in milliseconds (optional)' },
+      },
+      required: ['skill_id'],
+    },
+  },
+  {
+    name: 'agentdb_capabilities',
+    description: 'Report what this AgentDB server is running on: native accelerator features that loaded, the vector backend in use and the ones available, the SQL driver, the embedding model and dimension (and whether it is the hash fallback), and the ranking defaults. Read-only.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -1531,6 +1621,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 patterns.slice(0, 5).map((p, i) =>
                   `${i + 1}. [ID: ${p.id}] ${p.taskType}\n` +
                   `   Similarity: ${(p.similarity || 0).toFixed(3)}\n` +
+                  (p.score !== undefined ? `   Rank score: ${p.score.toFixed(3)} (similarity + outcome)\n` : '') +
                   `   Success Rate: ${(p.successRate * 100).toFixed(1)}%\n` +
                   `   Approach: ${p.approach.substring(0, 80)}${p.approach.length > 80 ? '...' : ''}\n` +
                   `   Uses: ${p.uses || 0}`
@@ -1581,6 +1672,59 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               text: output,
             },
           ],
+        };
+      }
+
+      case 'agentdb_pattern_feedback': {
+        const patternId = validateId(args?.pattern_id, 'pattern_id');
+        const { success, reward } = validateFeedback(args);
+        if (!(await reasoningBank.recordOutcome(patternId, success, reward))) {
+          throw new ValidationError(`Pattern ${patternId} not found`, 'NOT_FOUND', 'pattern_id');
+        }
+        caches.stats.clear();
+        const pattern = reasoningBank.getPattern(patternId)!;
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              patternId,
+              recorded: { success, reward: reward ?? (success ? 1 : 0) },
+              uses: pattern.uses,
+              successRate: pattern.successRate,
+              avgReward: pattern.avgReward,
+            }, null, 2),
+          }],
+        };
+      }
+
+      case 'agentdb_skill_feedback': {
+        const skillId = validateId(args?.skill_id, 'skill_id');
+        const { success, reward } = validateFeedback(args);
+        const latencyMs = args?.latency_ms === undefined || args?.latency_ms === null
+          ? undefined
+          : validateNumericRange(args.latency_ms, 'latency_ms', 0, MAX_FEEDBACK_LATENCY_MS);
+        if (!skills.recordOutcome(skillId, success, reward, latencyMs)) {
+          throw new ValidationError(`Skill ${skillId} not found`, 'NOT_FOUND', 'skill_id');
+        }
+        const row = db.prepare('SELECT uses, success_rate, avg_reward, avg_latency_ms FROM skills WHERE id = ?').get(skillId) as any;
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              skillId,
+              recorded: { success, reward: reward ?? (success ? 1 : 0), latencyMs },
+              uses: row.uses,
+              successRate: row.success_rate,
+              avgReward: row.avg_reward,
+              avgLatencyMs: row.avg_latency_ms,
+            }, null, 2),
+          }],
+        };
+      }
+
+      case 'agentdb_capabilities': {
+        return {
+          content: [{ type: 'text', text: JSON.stringify(await describeCapabilities(), null, 2) }],
         };
       }
 

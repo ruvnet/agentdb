@@ -13,11 +13,13 @@ import { normalizeRowId } from '../types/database.types.js';
 import { EmbeddingService } from './EmbeddingService.js';
 import type { VectorBackend } from '../backends/VectorBackend.js';
 import { searchVectors } from '../backends/VectorBackend.js';
+import { sqlExactSource } from '../backends/ExactSearch.js';
 import type { LearningBackend } from '../backends/LearningBackend.js';
 import type { GraphBackend, GraphNode } from '../backends/GraphBackend.js';
 import type { GraphDatabaseAdapter } from '../backends/graph/GraphDatabaseAdapter.js';
 import { NodeIdMapper } from '../utils/NodeIdMapper.js';
 import { QueryCache, type QueryCacheConfig } from '../core/QueryCache.js';
+import { TopK, squaredNorm, cosineWithQueryNorm } from '../utils/top-k.js';
 
 function finiteNumber(value: unknown, name: string): number {
   const n = Number(value);
@@ -373,10 +375,20 @@ export class ReflexionMemory {
   ): Promise<EpisodeWithEmbedding[]> {
     const { k = 5, minReward, onlyFailures, onlySuccesses, timeWindowDays } = query;
 
-    // Get candidates from vector backend
-    const searchResults = await searchVectors(this.vectorBackend!, queryEmbedding, k * 3, {
-      threshold: 0.0,
-    });
+    // Get candidates from vector backend; small or short answers are
+    // completed by exact cosine over episode_embeddings (ADR-015)
+    const searchResults = await searchVectors(
+      this.vectorBackend!,
+      queryEmbedding,
+      k * 3,
+      { threshold: 0.0 },
+      sqlExactSource(this.db, {
+        table: 'episode_embeddings',
+        idColumn: 'episode_id',
+        vectorId: (id) => String(id),
+        owns: (hit) => EPISODE_VECTOR_ID.test(hit.id),
+      })
+    );
 
     // The vector backend may be shared with other controllers ("skill:N",
     // "causal-edge:N"); episode vectors use the bare numeric row id.
@@ -436,16 +448,19 @@ export class ReflexionMemory {
 
     const rows = stmt.all(...params);
 
-    // Calculate similarities and convert
-    const episodes: EpisodeWithEmbedding[] = rows.map((row) => {
+    // Bounded top-k over the scan; only the winners are converted. Ordering
+    // matches the old sort on (similarity || 0) with scan order on ties.
+    const queryNorm = Math.sqrt(squaredNorm(queryEmbedding));
+    const top = new TopK<{ row: (typeof rows)[number]; embedding: Float32Array; similarity: number }>(k);
+    for (const row of rows) {
       const embedding = this.deserializeEmbedding(row.embedding);
-      const similarity = this.cosineSimilarity(queryEmbedding, embedding);
-      return this.convertDatabaseEpisode(row, similarity, embedding);
-    });
+      const similarity = cosineWithQueryNorm(queryEmbedding, queryNorm, embedding);
+      top.push(similarity || 0, { row, embedding, similarity });
+    }
 
-    // Sort by similarity and return top-k
-    episodes.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
-    return episodes.slice(0, k);
+    return top
+      .sorted()
+      .map(({ item }) => this.convertDatabaseEpisode(item.row, item.similarity, item.embedding));
   }
 
   /**

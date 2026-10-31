@@ -67,6 +67,29 @@ export interface SearchOptions {
    * an id that hasn't been resolved via `recordFeedback` yet throws.
    */
   feedbackId?: string;
+
+  /**
+   * searchVectors() only: collections with fewer rows than this are always
+   * answered by exact cosine over the stored embeddings (ADR-015). Default
+   * AGENTDB_EXACT_SEARCH_THRESHOLD or 1000; 0 disables the small-collection
+   * path (the short-result path still applies).
+   */
+  exactSearchThreshold?: number;
+}
+
+/**
+ * The caller's own copy of a collection, used by searchVectors() to answer
+ * exactly when the approximate index cannot be trusted (ADR-015).
+ */
+export interface ExactSearchSource {
+  /** Rows in the collection (not the backend, which may be shared) */
+  count(): number;
+  /** Exact top-k by cosine over the stored embeddings, best first */
+  scan(query: Float32Array, k: number, threshold: number): SearchResult[];
+  /** Index hits that belong to this collection; default: all */
+  owns?(result: SearchResult): boolean;
+  /** Identity used to dedupe index hits against scan results; default: id */
+  key?(result: SearchResult): string;
 }
 
 export interface VectorStats {
@@ -193,17 +216,70 @@ export function isAsyncVectorBackend(backend: VectorBackend): backend is VectorB
   return typeof (backend as Partial<VectorBackendAsync>).searchAsync === 'function';
 }
 
+/** Collections smaller than this are searched exactly (ADR-015) */
+export const DEFAULT_EXACT_SEARCH_THRESHOLD = 1000;
+
+function exactSearchThreshold(options?: SearchOptions): number {
+  const configured = options?.exactSearchThreshold
+    ?? (typeof process !== 'undefined' ? Number(process.env?.AGENTDB_EXACT_SEARCH_THRESHOLD) : NaN);
+  return Number.isFinite(configured) && configured >= 0 ? configured : DEFAULT_EXACT_SEARCH_THRESHOLD;
+}
+
 /**
  * k-NN search that works with both sync and async-native backends.
  * Async-native backends cannot answer the sync search() — use this instead.
+ *
+ * With an `exact` source, the answer falls back to exact cosine over the
+ * caller's stored embeddings when the index cannot be trusted:
+ * - the collection has fewer than `exactSearchThreshold` rows (HNSW on tiny
+ *   graphs misses neighbours, ruvnet/RuVector#1298), or
+ * - the index returned fewer of the collection's vectors than
+ *   min(k, collection size).
+ * Exact hits come first, in exact order; index hits the scan did not see
+ * (stale rows) are appended after deduplication.
  */
 export async function searchVectors(
   backend: VectorBackend,
   query: Float32Array,
   k: number,
-  options?: SearchOptions
+  options?: SearchOptions,
+  exact?: ExactSearchSource
 ): Promise<SearchResult[]> {
-  return isAsyncVectorBackend(backend)
-    ? backend.searchAsync(query, k, options)
-    : backend.search(query, k, options);
+  let hits: SearchResult[];
+  try {
+    hits = isAsyncVectorBackend(backend)
+      ? await backend.searchAsync(query, k, options)
+      : backend.search(query, k, options);
+  } catch (error) {
+    if (!exact) throw error;
+    hits = [];
+  }
+  if (!exact) return hits;
+
+  let owned: SearchResult[];
+  let rows: number;
+  let exactHits: SearchResult[];
+  try {
+    owned = exact.owns ? hits.filter((hit) => exact.owns!(hit)) : hits;
+    rows = exact.count();
+    if (rows >= exactSearchThreshold(options) && owned.length >= Math.min(k, rows)) return hits;
+    // No threshold means no cut-off, as for the index (negative cosines included)
+    exactHits = exact.scan(query, k, options?.threshold ?? -Infinity);
+  } catch {
+    // The caller's table is unavailable: the index answer is all there is
+    return hits;
+  }
+
+  const keyOf = exact.key ?? ((hit: SearchResult) => hit.id);
+  const seen = new Set(exactHits.map(keyOf));
+  const merged = [...exactHits];
+  for (const hit of owned) {
+    if (merged.length >= k) break;
+    const key = keyOf(hit);
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(hit);
+    }
+  }
+  return merged.slice(0, Math.max(0, k));
 }

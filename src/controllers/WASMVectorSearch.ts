@@ -16,6 +16,42 @@ import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
 import { existsSync } from 'fs';
 import { validateFilterColumns, validateSqlIdentifier } from '../security/input-validation.js';
+import { TopK, blobToFloat32 } from '../utils/top-k.js';
+
+/** Squared norm with the same 4-way grouping as cosineSimilarity() below. */
+function unrolledSquaredNorm(a: Float32Array): number {
+  let norm = 0;
+  const len = a.length;
+  const loopEnd = len - (len % 4);
+  for (let i = 0; i < loopEnd; i += 4) {
+    norm += a[i] * a[i] + a[i+1] * a[i+1] + a[i+2] * a[i+2] + a[i+3] * a[i+3];
+  }
+  for (let i = loopEnd; i < len; i++) {
+    norm += a[i] * a[i];
+  }
+  return norm;
+}
+
+/**
+ * cosineSimilarity() with the query's squared norm precomputed: same
+ * accumulation order, so the result is bit-identical.
+ */
+function unrolledCosine(a: Float32Array, normASq: number, b: Float32Array): number {
+  let dotProduct = 0;
+  let normB = 0;
+  const len = a.length;
+  const loopEnd = len - (len % 4);
+  for (let i = 0; i < loopEnd; i += 4) {
+    dotProduct += a[i] * b[i] + a[i+1] * b[i+1] + a[i+2] * b[i+2] + a[i+3] * b[i+3];
+    normB += b[i] * b[i] + b[i+1] * b[i+1] + b[i+2] * b[i+2] + b[i+3] * b[i+3];
+  }
+  for (let i = loopEnd; i < len; i++) {
+    dotProduct += a[i] * b[i];
+    normB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normASq) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dotProduct / denom;
+}
 
 // Database type from db-fallback
 type Database = any;
@@ -356,31 +392,20 @@ export class WASMVectorSearch {
 
     const rows = stmt.all(...params) as any[];
 
-    // Calculate similarities
-    const candidates = rows.map(row => {
-      const embedding = new Float32Array(
-        (row.embedding as Buffer).buffer,
-        (row.embedding as Buffer).byteOffset,
-        (row.embedding as Buffer).byteLength / 4
-      );
+    // Bounded top-k with the query norm computed once; result objects are
+    // built for the winners only. Same scores and order as the old
+    // map/filter/sort/slice (ties keep scan order).
+    const queryNormSq = unrolledSquaredNorm(query);
+    const top = new TopK<number>(k);
+    for (const row of rows) {
+      if (query.length !== (row.embedding as Buffer).byteLength / 4) {
+        throw new Error('Vectors must have same length');
+      }
+      const similarity = unrolledCosine(query, queryNormSq, blobToFloat32(row.embedding as Buffer));
+      if (similarity >= threshold) top.push(similarity, row.id);
+    }
 
-      const similarity = this.cosineSimilarity(query, embedding);
-      const distance = 1 - similarity; // Convert to distance
-
-      return {
-        id: row.id,
-        distance,
-        similarity,
-      };
-    });
-
-    // Filter by threshold and sort
-    const filtered = candidates
-      .filter(c => c.similarity >= threshold)
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, k);
-
-    return filtered;
+    return top.sorted().map(({ score, item }) => ({ id: item, distance: 1 - score, similarity: score }));
   }
 
   /**

@@ -5,6 +5,26 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-10-31
+
+Retrieval quality and observability (docs/adrs/ADR-015). No breaking changes.
+
+### Added
+
+- **Outcome feedback.** `SkillLibrary.recordOutcome(skillId, success, reward?, latencyMs?)`; `ReasoningBank.recordOutcome()` now returns `false` for an unknown id and rejects a non-finite reward. MCP tools `agentdb_pattern_feedback` and `agentdb_skill_feedback` (default `learning` profile) take an id plus `success`, a `reward` in [0, 1], or both; inputs are validated at the boundary.
+- **Reward-aware pattern ranking.** `searchPatterns()` ranks by `0.7·similarity + 0.2·successRate + 0.1·avgReward` in both the SQL and vector-backend paths. Weights are configurable (constructor `{ rerankWeights }` or per query); `rerank: false` restores similarity order. Results carry `score`; `similarity` is unchanged.
+- **`agentdb_capabilities` MCP tool** (read-only, default and readonly profiles): native accelerator features, the vector backend in use and the ones available, the SQL driver, the embedding model and dimension and whether the hash fallback is active, and the ranking defaults. `EmbeddingService.getRuntimeInfo()` backs the embedding part.
+- `searchVectors(backend, query, k, options, exact?)` takes an optional exact-search source; `SearchOptions.exactSearchThreshold` and `AGENTDB_EXACT_SEARCH_THRESHOLD` configure it.
+
+### Fixed
+
+- **Stored vectors missing from small indexes.** `@ruvector/core` 0.1.30's HNSW misses neighbours on tiny graphs (ruvnet/RuVector#1298); on 3.0.0 the native backend missed 41–85 of 225 self-lookups on 3–12-vector collections. Collections under 1000 rows are now answered by exact cosine over the stored embeddings, as is any search where the index returns fewer of the collection's vectors than `min(k, rows)` or throws. ReflexionMemory, SkillLibrary and ReasoningBank (vector-backend mode) use it; 3.0.0 only fell back when the index returned nothing.
+- ReasoningBank in vector-backend mode keeps the `pattern_embeddings` copy, skips deleted patterns instead of throwing, ignores other controllers' hits in a shared index, and `deletePattern()` removes the embedding row.
+
+### Performance
+
+- Full-table scans (ReflexionMemory SQL fallback, SkillLibrary legacy, `WASMVectorSearch.findKNN`, `SqlJsRvfBackend` search) keep a bounded top-k heap, compute the query norm once and build result objects for the winners only; `SqlJsRvfBackend` caches each vector's norm. Results are bit-identical. N=10k, 384-dim, k=10, best of three median: SqlJsRvfBackend 6.7 → 2.3 ms, SkillLibrary 44.5 → 35.4 ms, ReflexionMemory 44.8 → 38.3 ms, findKNN 23.3 → 19.6 ms (`benchmarks/topk-scan-bench.mts`).
+
 ## [3.0.0] - 2026-10-31
 
 First stable 3.x release, from a security, integration, self-learning and performance review (docs/adrs/ADR-014). Published to `latest` only; no alpha dist-tag.
