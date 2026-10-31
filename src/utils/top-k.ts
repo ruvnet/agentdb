@@ -112,7 +112,10 @@ export function cosineWithQueryNorm(query: Float32Array, queryNorm: number, b: F
   return dot / (queryNorm * Math.sqrt(normB));
 }
 
-/** Zero-copy Float32Array view over a BLOB column value. */
+/** Float32Array view over a BLOB column value (copied only if misaligned). */
 export function blobToFloat32(blob: Uint8Array): Float32Array {
+  if (blob.byteOffset % 4 !== 0) {
+    return new Float32Array(blob.buffer.slice(blob.byteOffset, blob.byteOffset + blob.byteLength));
+  }
   return new Float32Array(blob.buffer, blob.byteOffset, blob.byteLength / 4);
 }

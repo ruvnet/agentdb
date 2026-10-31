@@ -23,6 +23,7 @@ import { normalizeRowId } from '../types/database.types.js';
 import { EmbeddingService } from './EmbeddingService.js';
 import type { VectorBackend, SearchResult } from '../backends/VectorBackend.js';
 import { searchVectors } from '../backends/VectorBackend.js';
+import { sqlExactSource } from '../backends/ExactSearch.js';
 
 /** Parse JSON from DB row values without throwing on malformed data. */
 function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
@@ -210,10 +211,11 @@ export class ReasoningBank {
         taskType: pattern.taskType,
         successRate: pattern.successRate,
       });
-    } else {
-      // v1: Use legacy SQLite storage (backward compatible)
-      this.storePatternEmbedding(patternId, embedding);
     }
+
+    // Always keep the SQL copy: v1 searches it, and v2 falls back to it when
+    // the index is small or comes back short (ADR-015)
+    this.storePatternEmbedding(patternId, embedding);
 
     // Invalidate cache
     this.cache.clear();
@@ -225,7 +227,7 @@ export class ReasoningBank {
    * Store pattern embedding
    */
   private storePatternEmbedding(patternId: number, embedding: Float32Array): void {
-    const blob = Buffer.from(embedding.buffer);
+    const blob = Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength);
 
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO pattern_embeddings (pattern_id, embedding)
@@ -296,11 +298,31 @@ export class ReasoningBank {
       }
     }
 
-    // Perform vector search
-    const results = await searchVectors(this.vectorBackend!, queryEmbedding, k, { threshold });
+    // Perform vector search; small or short index answers are completed by
+    // exact cosine over pattern_embeddings (ADR-015)
+    const results = await searchVectors(
+      this.vectorBackend!,
+      queryEmbedding,
+      k,
+      { threshold },
+      this.exactPatternSource()
+    );
 
-    // Hydrate with metadata from SQLite
-    return this.hydratePatterns(results);
+    // Hydrate with metadata from SQLite. A shared backend can return other
+    // controllers' vectors, which carry no patternId.
+    return this.hydratePatterns(results.filter((r) => r.metadata?.patternId != null));
+  }
+
+  /** pattern_embeddings as an exact-search source; index ids are per-process, so dedupe on patternId */
+  private exactPatternSource() {
+    return sqlExactSource(this.db, {
+      table: 'pattern_embeddings',
+      idColumn: 'pattern_id',
+      vectorId: (id) => `pattern:${id}`,
+      metadata: (id) => ({ patternId: id }),
+      owns: (hit) => hit.metadata?.patternId != null,
+      key: (hit) => String(hit.metadata?.patternId),
+    });
   }
 
   /**
@@ -400,7 +422,7 @@ export class ReasoningBank {
       SELECT * FROM reasoning_patterns WHERE id = ?
     `);
 
-    return results.map(result => {
+    return results.flatMap(result => {
       const patternId = result.metadata?.patternId;
       if (!patternId) {
         throw new Error(`VectorBackend result missing patternId: ${result.id}`);
@@ -408,11 +430,10 @@ export class ReasoningBank {
 
       const row = stmt.get(patternId) as any;
 
-      if (!row) {
-        throw new Error(`Pattern ${patternId} not found in database`);
-      }
+      // Deleted pattern still present in the index: skip it
+      if (!row) return [];
 
-      return {
+      return [{
         id: row.id,
         taskType: row.task_type,
         approach: row.approach,
@@ -423,7 +444,7 @@ export class ReasoningBank {
         metadata: safeJsonParse(row.metadata, {}),
         createdAt: row.ts,
         similarity: result.similarity,
-      };
+      }];
     });
   }
 
@@ -650,6 +671,8 @@ export class ReasoningBank {
    * Delete pattern by ID
    */
   deletePattern(patternId: number): boolean {
+    // Foreign-key cascades are off unless the connection enables them
+    this.db.prepare('DELETE FROM pattern_embeddings WHERE pattern_id = ?').run(patternId);
     const stmt = this.db.prepare('DELETE FROM reasoning_patterns WHERE id = ?');
     const result = stmt.run(patternId);
 

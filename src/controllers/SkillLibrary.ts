@@ -13,6 +13,7 @@ import { normalizeRowId } from '../types/database.types.js';
 import { EmbeddingService } from './EmbeddingService.js';
 import { VectorBackend } from '../backends/VectorBackend.js';
 import { searchVectors } from '../backends/VectorBackend.js';
+import { sqlExactSource } from '../backends/ExactSearch.js';
 import type { GraphDatabaseAdapter } from '../backends/graph/GraphDatabaseAdapter.js';
 import { NodeIdMapper } from '../utils/NodeIdMapper.js';
 import { QueryCache, type QueryCacheConfig } from '../core/QueryCache.js';
@@ -272,7 +273,20 @@ export class SkillLibrary {
 
     // Use VectorBackend for semantic search (if available)
     if (this.vectorBackend) {
-      const searchResults = await searchVectors(this.vectorBackend, queryEmbedding, k * 3);
+      // Small or short index answers are completed by exact cosine over
+      // skill_embeddings (ADR-015)
+      const searchResults = await searchVectors(
+        this.vectorBackend,
+        queryEmbedding,
+        k * 3,
+        undefined,
+        sqlExactSource(this.db, {
+          table: 'skill_embeddings',
+          idColumn: 'skill_id',
+          vectorId: (id) => `skill:${id}`,
+          owns: (hit) => SKILL_VECTOR_ID.test(hit.id),
+        })
+      );
 
       // The vector backend may be shared with other controllers (episodes use
       // bare numeric ids, causal edges "causal-edge:N"); only "skill:N" is ours.
