@@ -462,12 +462,17 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
   private writeVector(id: string, vec: Float32Array, metadata?: Record<string, unknown>): void {
     const blob = new Uint8Array(vec.buffer, vec.byteOffset, vec.byteLength);
     const metaStr = metadata ? JSON.stringify(metadata) : null;
-    if (!this.upsertStmt) {
-      this.upsertStmt = this.db.prepare(
-        'INSERT OR REPLACE INTO rvf_vectors (id, embedding, metadata) VALUES (?, ?, ?)',
-      );
+    const sql = 'INSERT OR REPLACE INTO rvf_vectors (id, embedding, metadata) VALUES (?, ?, ?)';
+    if (!this.upsertStmt) this.upsertStmt = this.db.prepare(sql);
+    try {
+      this.upsertStmt.run([id, blob, metaStr]);
+    } catch (error) {
+      // Freed by an export() elsewhere (e.g. wrapExistingSqlJsDatabase on
+      // this same database): sql.js then throws the string "Statement closed"
+      if (error !== 'Statement closed') throw error;
+      this.upsertStmt = this.db.prepare(sql);
+      this.upsertStmt.run([id, blob, metaStr]);
     }
-    this.upsertStmt.run([id, blob, metaStr]);
     this.cache.set(id, { embedding: new Float32Array(vec), metadata });
   }
 
