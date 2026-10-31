@@ -73,6 +73,20 @@ export interface WitnessVerification {
   valid: boolean;
   entries: number;
   error?: string;
+  /** True when the installed @ruvector/rvf cannot verify witnesses at all */
+  unsupported?: boolean;
+}
+
+function unsupportedWitness(reason: string): WitnessVerification {
+  return { valid: false, entries: 0, unsupported: true, error: `unsupported: ${reason}` };
+}
+
+function toWitnessVerification(raw: any): WitnessVerification {
+  return {
+    valid: raw?.valid === true,
+    entries: typeof raw?.entries === 'number' ? raw.entries : 0,
+    error: raw?.error,
+  };
 }
 
 /** Performance statistics */
@@ -537,8 +551,10 @@ export class RvfBackend implements VectorBackendAsync {
   /** Get the distance metric name from the RVF store */
   metric(): string {
     this.ensureInitialized();
+    if (typeof this.db.metric !== 'function') return this.metricType;
     try {
-      return this.db.metric();
+      const raw = this.db.metric();
+      return typeof raw === 'string' ? raw : this.metricType;
     } catch {
       return this.metricType;
     }
@@ -548,6 +564,9 @@ export class RvfBackend implements VectorBackendAsync {
   indexStats(): IndexStats {
     this.ensureInitialized();
     try {
+      if (typeof this.db.indexStats !== 'function') {
+        throw new Error('indexStats unsupported');
+      }
       const raw = this.db.indexStats();
       return {
         indexedVectors: raw.indexedVectors ?? 0,
@@ -567,29 +586,57 @@ export class RvfBackend implements VectorBackendAsync {
     }
   }
 
-  /** Verify SHAKE-256 witness chain integrity */
+  /**
+   * Verify SHAKE-256 witness chain integrity.
+   *
+   * Fails closed: `valid` is true only when the store itself reports
+   * `valid: true`. When the installed @ruvector/rvf has no verifyWitness
+   * (0.2.x), or only an async one, the result is `unsupported`.
+   */
   verifyWitness(): WitnessVerification {
     this.ensureInitialized();
+    if (typeof this.db.verifyWitness !== 'function') {
+      return unsupportedWitness('this @ruvector/rvf build does not provide verifyWitness()');
+    }
     try {
       const raw = this.db.verifyWitness();
-      return {
-        valid: raw.valid ?? false,
-        entries: raw.entries ?? 0,
-        error: raw.error,
-      };
+      if (raw && typeof raw.then === 'function') {
+        raw.then(undefined, () => { /* result discarded; see verifyWitnessAsync() */ });
+        return unsupportedWitness('verifyWitness() is async in this @ruvector/rvf build; use verifyWitnessAsync()');
+      }
+      return toWitnessVerification(raw);
     } catch (err) {
-      return {
-        valid: false,
-        entries: 0,
-        error: (err as Error).message,
-      };
+      return { valid: false, entries: 0, error: (err as Error).message };
     }
   }
 
-  /** Snapshot-freeze state, returns epoch number */
-  freeze(): number {
+  /** verifyWitness() that also supports async @ruvector/rvf implementations */
+  async verifyWitnessAsync(): Promise<WitnessVerification> {
     this.ensureInitialized();
-    return this.db.freeze();
+    if (typeof this.db.verifyWitness !== 'function') {
+      return unsupportedWitness('this @ruvector/rvf build does not provide verifyWitness()');
+    }
+    try {
+      return toWitnessVerification(await this.db.verifyWitness());
+    } catch (err) {
+      return { valid: false, entries: 0, error: (err as Error).message };
+    }
+  }
+
+  /**
+   * Snapshot-freeze state, returns epoch number.
+   * Async because @ruvector/rvf 0.4.x freezes asynchronously.
+   */
+  async freeze(): Promise<number> {
+    this.ensureInitialized();
+    if (typeof this.db.freeze !== 'function') {
+      throw new Error('unsupported: this @ruvector/rvf build does not provide freeze()');
+    }
+    const epoch = await this.db.freeze();
+    if (typeof epoch !== 'number') {
+      throw new Error(`freeze() returned ${typeof epoch}, expected an epoch number`);
+    }
+    return epoch;
   }
 
   // ─── ADR-007 Phase 1: Extended RVF APIs ───

@@ -304,7 +304,7 @@ export const rvfCommand = new Command('rvf')
       .action(async (store: string, opts: { json?: boolean }) => {
         try {
           const backend = await loadRvfBackend(store);
-          const witness = backend.verifyWitness();
+          const witness = await backend.verifyWitnessAsync();
 
           if (opts.json) {
             console.log(JSON.stringify(witness, null, 2));
@@ -334,7 +334,7 @@ export const rvfCommand = new Command('rvf')
       .action(async (store: string, opts: { json?: boolean }) => {
         try {
           const backend = await loadRvfBackend(store);
-          const epoch = backend.freeze();
+          const epoch = await backend.freeze();
 
           if (opts.json) {
             console.log(JSON.stringify({ store, epoch }, null, 2));
