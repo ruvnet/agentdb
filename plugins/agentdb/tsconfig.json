@@ -1,5 +1,5 @@
 {
-  "//": "Self-contained on purpose (as ruflo's mod plugins): it must not extend a file that only exists after Claude Code (>= 2.1.287) has loaded the plugin. Claude Code writes its declarations to .claude-plugin/types/ (gitignored) on load; tsc -p plugins/agentic-qe-fleet then reads them through typeRoots.",
+  "//": "Self-contained: it must not extend a file that only exists after Claude Code has loaded the plugin. Claude Code writes its declarations to .claude-plugin/types/ (gitignored) on load; tsc -p plugins/agentdb then reads them through typeRoots.",
   "compilerOptions": {
     "target": "es2023",
     "lib": ["es2023"],
