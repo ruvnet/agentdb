@@ -19,6 +19,18 @@ import type { GraphDatabaseAdapter } from '../backends/graph/GraphDatabaseAdapte
 import { NodeIdMapper } from '../utils/NodeIdMapper.js';
 import { QueryCache, type QueryCacheConfig } from '../core/QueryCache.js';
 
+function finiteNumber(value: unknown, name: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) throw new Error(`${name} must be a finite number`);
+  return n;
+}
+
+function positiveInt(value: unknown, name: string): number {
+  const n = Math.floor(finiteNumber(value, name));
+  if (n < 1) throw new Error(`${name} must be a positive integer`);
+  return n;
+}
+
 /** Vector ids this controller writes: the bare episode row id */
 const EPISODE_VECTOR_ID = /^\d+$/;
 
@@ -485,8 +497,9 @@ export class ReflexionMemory {
     const { k = 5, minReward, onlyFailures, onlySuccesses, timeWindowDays } = query;
     let cypherQuery = 'MATCH (e:Episode) WHERE 1=1';
 
+    // Values are spliced into Cypher text, so only finite numbers get through
     if (minReward !== undefined) {
-      cypherQuery += ` AND e.reward >= ${minReward}`;
+      cypherQuery += ` AND e.reward >= ${finiteNumber(minReward, 'minReward')}`;
     }
     if (onlyFailures) {
       cypherQuery += ` AND e.success = false`;
@@ -495,11 +508,11 @@ export class ReflexionMemory {
       cypherQuery += ` AND e.success = true`;
     }
     if (timeWindowDays) {
-      const cutoff = Date.now() - timeWindowDays * 86400000;
+      const cutoff = Date.now() - finiteNumber(timeWindowDays, 'timeWindowDays') * 86400000;
       cypherQuery += ` AND e.createdAt >= ${cutoff}`;
     }
 
-    cypherQuery += ` RETURN e LIMIT ${k * 3}`;
+    cypherQuery += ` RETURN e LIMIT ${positiveInt(k, 'k') * 3}`;
     return cypherQuery;
   }
 
