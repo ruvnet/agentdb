@@ -41,6 +41,8 @@ describe('secret write guard (enforce, the default)', () => {
     await $.session.start(START)
     expect(await call($, `${MANUAL}reflexion_store`, { session_id: 's', task: 't', critique: 'password=Zq8vT3mK9wX2' })).toContain('looks like a secret')
     expect(await call($, `${PLUGIN}agentdb_insert`, { text: 'x', metadata: { api_key: 'Zq8vT3mK9wX2LpR7' } })).toContain('looks like a secret')
+    expect(await call($, `${PLUGIN}agentdb_skill_feedback`, { success: true, reward: 1, note: `worked with ${TOKEN}` })).toContain('looks like a secret')
+    expect(await call($, `${PLUGIN}agentdb_pattern_feedback`, { success: true, reward: 0.8 })).toContain('ran')
     expect(await call($, `${PLUGIN}skill_create_batch`, { skills: [{ name: 'deploy', code: '-----BEGIN RSA PRIVATE KEY-----' }] })).toContain('looks like a secret')
   })
 

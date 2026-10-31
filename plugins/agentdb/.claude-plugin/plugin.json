@@ -59,7 +59,7 @@
     "allow_destructive": {
       "type": "boolean",
       "title": "Allow destructive admin tools",
-      "description": "Off (default): the mod refuses agentdb_delete, agentdb_delete_batch, agentdb_clear_cache and agentdb_init with reset. On: lets them through (the server only exposes them under the admin profile).",
+      "description": "Off (default): the mod refuses agentdb_delete, agentdb_delete_batch, agentdb_clear_cache and agentdb_init with reset. On: lets them through (the server only exposes them under the admin profile or when named in mcp_allow).",
       "required": false,
       "default": false
     }

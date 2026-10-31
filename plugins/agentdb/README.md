@@ -28,12 +28,12 @@ Set them with `/plugin configure agentdb@agentdb`, then restart the session so t
 
 | Option | Sets | Default | Effect |
 |---|---|---|---|
-| `mcp_profile` | `AGENTDB_MCP_PROFILE` | empty = `learning` | Which tools the server exposes: `readonly`/`retrieval` (search, stats, recall), `learning` (plus memory writes, reflexion, skills, causal edges, RL feedback), `admin` (everything, including `agentdb_init`, `agentdb_delete`, `agentdb_delete_batch`, `agentdb_clear_cache`). An unknown name stops the server. |
+| `mcp_profile` | `AGENTDB_MCP_PROFILE` | empty = `learning` | Which tools the server exposes: `readonly`/`retrieval` (search, stats, recall), `learning` (plus memory writes, reflexion, skills, causal edges, RL and pattern/skill feedback, `agentdb_capabilities`), `admin` (everything, including `agentdb_init`, `agentdb_delete`, `agentdb_delete_batch`, `agentdb_clear_cache`). An unknown name stops the server. |
 | `db_path` | `AGENTDB_PATH` | empty = `./agentdb.db` | The database file. Relative paths resolve from the directory Claude Code starts the server in. |
-| `mcp_allow` | `AGENTDB_MCP_ALLOW` | empty | Tool names, comma or space separated, added to the profile. |
+| `mcp_allow` | `AGENTDB_MCP_ALLOW` | empty | Tool names, comma or space separated, added to the profile. Naming an admin-only tool exposes it; the mod still refuses it unless `allow_destructive` is on. |
 | `mcp_deny` | `AGENTDB_MCP_DENY` | empty | Tool names removed in any profile. |
 | `secret_guard` | (mod) | `enforce` | `enforce` refuses memory writes that hold what looks like a key, token, password or private key; `notify` lets them through with a toast; `off` does not check. |
-| `allow_destructive` | (mod) | `false` | When off, the mod refuses `agentdb_delete`, `agentdb_delete_batch`, `agentdb_clear_cache` and `agentdb_init` with `reset: true`. Deleting data takes both `mcp_profile=admin` and this option. |
+| `allow_destructive` | (mod) | `false` | When off, the mod refuses `agentdb_delete`, `agentdb_delete_batch`, `agentdb_clear_cache` and `agentdb_init` with `reset: true` (drops every table in the open database). Deleting data takes both exposing those tools (`mcp_profile=admin`, or naming them in `mcp_allow`) and this option. |
 
 The four server options are passed as environment variables even when empty; the server treats an empty value as unset (`learning` profile, `./agentdb.db`, no extra allow or deny).
 
@@ -43,8 +43,8 @@ The four server options are passed as environment variables even when empty; the
 |---|---|---|
 | Agent | `agentdb-memory-specialist` | Stores and recalls memory, patterns, episodes and skills; records feedback. |
 | Skill | `agentdb-vector-memory` | `agentdb_insert`/`agentdb_search`, patterns, certified recall. |
-| Skill | `agentdb-reflexion-learning` | Reflexion episodes, skills from what worked, causal edges, RL feedback, consolidation. |
-| Skill | `agentdb-setup-diagnostics` | Connection, profiles, database location, why a tool is missing or refused. |
+| Skill | `agentdb-reflexion-learning` | Reflexion episodes, skills from what worked, pattern/skill outcome feedback, causal edges, RL feedback, consolidation. |
+| Skill | `agentdb-setup-diagnostics` | Connection, backend (`agentdb_capabilities`), profiles, database location, why a tool is missing or refused. |
 | Command | `/agentdb-status` | Server health and counts. |
 | Mod command | `/agentdb-guard status`, `/agentdb-guard scan <text>` | The guard's modes and counters; what the guard would refuse (the rule name, never the value). Answered locally, no model turn. |
 
@@ -52,7 +52,7 @@ The four server options are passed as environment variables even when empty; the
 
 `hooks/` is a function-hooks module (ADR-445 shape, as `ruflo-agentdb` and `agentic-qe-fleet`). It hooks `tool.call` and judges only calls to an MCP server named `agentdb`:
 
-- **Secret guard.** Writes through `agentdb_insert[_batch]`, `agentdb_pattern_store[_batch]`, `reflexion_store[_batch]`, `skill_create[_batch]`, `causal_add_edge`, `experience_record` and `learning_feedback` are screened for token shapes (private keys, cloud and SaaS keys, JWTs, bearer tokens, URLs with credentials) and for credential-named fields with random-looking values. The refusal never repeats the value. Inputs too large to screen in full are refused.
+- **Secret guard.** Writes through `agentdb_insert[_batch]`, `agentdb_pattern_store[_batch]`, `reflexion_store[_batch]`, `skill_create[_batch]`, `causal_add_edge`, `experience_record`, `learning_feedback`, `agentdb_pattern_feedback` and `agentdb_skill_feedback` are screened for token shapes (private keys, cloud and SaaS keys, JWTs, bearer tokens, URLs with credentials) and for credential-named fields with random-looking values. The refusal never repeats the value. Inputs too large to screen in full are refused.
 - **Destructive guard.** The admin-only tools are refused unless `allow_destructive` is on. The server's default profile already hides them; the mod is a second layer for the admin profile.
 - **Fail closed.** If the guard throws or overruns on a guarded call, the call is refused.
 

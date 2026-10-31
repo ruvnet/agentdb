@@ -21,7 +21,7 @@ export function agentdbTool(name: string): string | undefined {
   return parts && AGENTDB_SERVER.test(parts.server) ? parts.tool : undefined
 }
 
-/** The agentdb MCP tools that write text into memory (src/security/mcp-policy.ts, learning profile). */
+/** The agentdb MCP tools that write text into memory (src/security/mcp-policy.ts, learning profile, agentdb 3.1.0). */
 export const WRITERS: ReadonlySet<string> = new Set([
   'agentdb_insert',
   'agentdb_insert_batch',
@@ -34,6 +34,9 @@ export const WRITERS: ReadonlySet<string> = new Set([
   'causal_add_edge',
   'experience_record',
   'learning_feedback',
+  // agentdb 3.1.0: outcome feedback for the reward-aware rerank; it can carry a free-text note.
+  'agentdb_pattern_feedback',
+  'agentdb_skill_feedback',
 ])
 
 /** The admin-only tools that delete or reset data (ADMIN_ONLY_TOOLS); agentdb_init only with `reset: true`. */

@@ -1,6 +1,6 @@
 ---
 name: agentdb-reflexion-learning
-description: Learn from outcomes with AgentDB — store reflexion episodes with a self-critique, turn what worked into skills, record causal edges and RL feedback, and retrieve past failures before retrying. Use after a task succeeds or fails, when the user says "learn from this" or "don't make that mistake again", or before retrying something that failed.
+description: Learn from outcomes with AgentDB — store reflexion episodes with a self-critique, turn what worked into skills, report pattern and skill outcomes for reward-aware recall, record causal edges and RL feedback, and retrieve past failures before retrying. Use after a task succeeds or fails, when the user says "learn from this" or "don't make that mistake again", or before retrying something that failed.
 allowed-tools:
   - mcp__plugin_agentdb_agentdb__reflexion_store
   - mcp__plugin_agentdb_agentdb__reflexion_retrieve
@@ -9,6 +9,8 @@ allowed-tools:
   - mcp__plugin_agentdb_agentdb__causal_add_edge
   - mcp__plugin_agentdb_agentdb__causal_query
   - mcp__plugin_agentdb_agentdb__learning_feedback
+  - mcp__plugin_agentdb_agentdb__agentdb_pattern_feedback
+  - mcp__plugin_agentdb_agentdb__agentdb_skill_feedback
   - mcp__plugin_agentdb_agentdb__learning_metrics
   - mcp__plugin_agentdb_agentdb__consolidate_now
 ---
@@ -41,7 +43,9 @@ skill_create(name: "safe-column-add", description: "Add a NOT NULL column withou
 
 4. **When one thing reliably changes another**, record the edge: `causal_add_edge(cause: "enable query cache", effect: "p95 latency", uplift: -0.4, confidence: 0.8)`. Query with `causal_query(query)`.
 
-5. **After a batch of episodes**, `consolidate_now()` promotes high-reward episodes into skills and prunes weak causal edges, instead of waiting for the scheduled run.
+5. **After using a recalled pattern or skill**, close the loop: `agentdb_pattern_feedback` or `agentdb_skill_feedback` with whether it worked (success, reward 0..1). Recall reranks on these outcomes, so an approach that keeps failing sinks. Check the tool's input schema for the id field it expects (from the search result).
+
+6. **After a batch of episodes**, `consolidate_now()` promotes high-reward episodes into skills and prunes weak causal edges, instead of waiting for the scheduled run.
 
 ## RL feedback
 
