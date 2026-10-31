@@ -14,6 +14,7 @@
  */
 
 import chalk from 'chalk';
+import { timingSafeEqual } from 'crypto';
 
 // Database type from db-fallback
 type Database = any;
@@ -77,7 +78,8 @@ export class QUICServer {
   constructor(db: Database, config: QUICServerConfig = {}) {
     this.db = db;
     this.config = {
-      host: config.host || '0.0.0.0',
+      // Loopback unless the caller explicitly exposes the server
+      host: config.host || '127.0.0.1',
       port: config.port || 4433,
       maxConnections: config.maxConnections || 100,
       authToken: config.authToken || '',
@@ -192,11 +194,16 @@ export class QUICServer {
    * Authenticate client request
    */
   private authenticate(clientId: string, authToken: string): boolean {
-    if (!this.config.authToken) {
-      return true; // No auth required
+    // A server without a token rejects everyone rather than accepting everyone
+    if (!this.config.authToken || typeof authToken !== 'string' || authToken.length === 0) {
+      console.log(chalk.red(`✗ Authentication failed for client: ${clientId}`));
+      return false;
     }
 
-    const isValid = authToken === this.config.authToken;
+    const expected = Buffer.from(this.config.authToken, 'utf8');
+    const given = Buffer.from(authToken, 'utf8');
+    // Constant-time compare; a length mismatch still fails without early exit on content
+    const isValid = given.length === expected.length && timingSafeEqual(given, expected);
     if (!isValid) {
       console.log(chalk.red(`✗ Authentication failed for client: ${clientId}`));
     }
@@ -485,7 +492,7 @@ export class QUICServer {
       isRunning: this.isRunning,
       activeConnections: this.connections.size,
       totalRequests,
-      config: this.config,
+      config: { ...this.config, authToken: this.config.authToken ? '[redacted]' : '' },
     };
   }
 
