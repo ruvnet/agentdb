@@ -105,6 +105,7 @@ export class FederatedSessionManager {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private loraManager: any = null;
   private dim: number;
+  private maxAgents = 100;
   private config: FederatedConfig;
   private _destroyed = false;
 
@@ -130,10 +131,14 @@ export class FederatedSessionManager {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const ruvllm: any = await import('@ruvector/ruvllm');
 
-      instance.coordinator = new ruvllm.FederatedCoordinator({
-        dimension: config.dimension,
-        maxAgents,
+      // Signature is (coordinatorId, config); passing the config first made
+      // it the id and left hiddenDim/embeddingDim at ruvllm's default of 256.
+      instance.coordinator = new ruvllm.FederatedCoordinator(`agentdb-${Date.now().toString(36)}`, {
+        hiddenDim: config.dimension,
+        embeddingDim: config.dimension,
+        ...(config.ewcLambda !== undefined ? { ewcLambda: config.ewcLambda } : {}),
       });
+      instance.maxAgents = maxAgents;
 
       if (config.qualityThreshold !== undefined) {
         instance.coordinator.setQualityThreshold(
@@ -193,6 +198,9 @@ export class FederatedSessionManager {
 
     if (this.activeSessions.has(agentId)) {
       throw new Error(`Session already active for agent: ${agentId}`);
+    }
+    if (this.activeSessions.size >= this.maxAgents) {
+      throw new Error(`Maximum concurrent sessions reached (${this.maxAgents})`);
     }
 
     const agent = this.coordinator.createAgent(agentId);
