@@ -5,6 +5,49 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-10-31
+
+First stable 3.x release, from a security, integration, self-learning and performance review (docs/adrs/ADR-014). Published to `latest` only; no alpha dist-tag.
+
+### Breaking
+
+- `RuVectorBackend.search()` is async-only and throws if called synchronously (it used to return `[]`). Use `searchAsync()`, or `searchVectors()` from `agentdb/backends`, which every controller now uses.
+- `RvfBackend.freeze()` and `NativeAccelerator`'s `graphBatchInsertNodes`, `graphCypherQuery` and `coreBatchInsert` return promises.
+- With `AGENTDB_MCP_PROFILE` unset, the MCP server uses the `learning` profile (now including the memory-write tools) instead of allowing every tool. `agentdb_init`, `agentdb_delete`, `agentdb_delete_batch` and `agentdb_clear_cache` need `AGENTDB_MCP_PROFILE=admin` or `AGENTDB_MCP_ALLOW`.
+- The QUIC server rejects every request when no token is configured, binds `127.0.0.1` by default, and the CLI no longer prints its token (`--auth-token` / `AGENTDB_QUIC_AUTH_TOKEN`).
+- `AgentDB.close()` also flushes and closes the vector backend.
+- Library diagnostics go to stderr, never stdout (same text).
+
+### Security
+
+- `agentdb_init` no longer deletes files: `db_path` is gone, and `reset` drops the tables on the open handle. It used to `unlinkSync` any caller-supplied path, under an allow-all default policy.
+- SQL injection through filter keys (`HNSWIndex`, `WASMVectorSearch`) and metadata paths (`MetadataFilter`) is closed: keys must be real column identifiers and JSON paths are bound parameters.
+- The model cache moved from shared `/tmp/agentdb-models` to a private `$XDG_CACHE_HOME/agentdb-models` (0700, owner-checked, not a symlink), and `.rvf` extraction can no longer write outside its directory.
+- `LLMRouter` no longer loads `.env` files implicitly (it read a hardcoded `/workspaces/agentic-flow/.env`); pass `envFile`.
+- PRAGMA commands are validated whole and run as one statement; Cypher numbers are coerced to finite values; MCP batch items are capped at 1000 and `k` at 100.
+- OpenTelemetry advisories: `@opentelemetry/sdk-node` ^0.220 (propagator-jaeger <2.9) and `@opentelemetry/resources` ^2.8 (core <2.8).
+
+### Fixed
+
+- **The default vector backend returns results.** `RuVectorBackend` never awaited `VectorDB.search()`, so every search was empty. It also called methods `VectorDB` lacks, ignored HNSW options and shared one `./ruvector.db` in the cwd. Searches are awaited, writes are ordered, storage is `<dbPath>.ruvector` (or private temp for `:memory:`), and Reflexion and SkillLibrary fall back to SQL when the index returns nothing.
+- Episodes no longer load as skills from the shared index.
+- `LearningSystem` saves feedback and trained policies, so `predict()` reflects them.
+- RVF witness verification fails closed with an explicit `unsupported` result on @ruvector/rvf builds without it (it threw "is not a function").
+- `NativeAccelerator` probes the APIs the native packages actually export, and reports them through `capabilities()`.
+- `FederatedCoordinator` is constructed with `(id, config)` and enforces `maxAgents`.
+- sql.js: statements freed by `save()`/`export()` are re-prepared, so the next write no longer throws.
+- Library timers no longer keep short-lived processes alive. `getPatternStats()` held one for 5 minutes, and the sql.js leak-warning interval held one for as long as the database was not closed.
+
+### Performance
+
+- sql.js vector upsert reuses one statement: 20k inserts 85 → 35 ms.
+- db-fallback reads column names once per query: 40k rows 45 → 21 ms (5 columns), 130 → 55 ms (16 columns).
+- SkillLibrary fetches hits with one `IN` query (300 hits 0.42 → 0.32 ms).
+
+### Removed
+
+- The unused `jsonwebtoken` dependency, and the `sharp` override that forced a vulnerable downgrade under `@huggingface/transformers` 4.3.
+
 ## [3.0.0-alpha.19] - 2026-07-29
 
 ### Fixed
