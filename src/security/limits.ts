@@ -112,16 +112,24 @@ export async function withTimeout<T>(
   timeoutMs: number = SECURITY_LIMITS.QUERY_TIMEOUT_MS,
   operation: string = 'operation'
 ): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    setTimeout(() => {
+    timer = setTimeout(() => {
       reject(new SecurityError(
         `${operation} timeout after ${timeoutMs}ms`,
         'QUERY_TIMEOUT'
       ));
     }, timeoutMs);
+    // The timer only bounds `promise`; it must not keep the process alive
+    timer.unref?.();
   });
 
-  return Promise.race([promise, timeout]);
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    // Cleared once `promise` settles, instead of firing timeoutMs later
+    clearTimeout(timer);
+  }
 }
 
 /**

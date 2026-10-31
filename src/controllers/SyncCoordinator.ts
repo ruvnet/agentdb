@@ -679,6 +679,8 @@ export class SyncCoordinator {
         console.error(chalk.red('✗ Auto-sync failed:'), err.message);
       }
     }, this.config.syncIntervalMs);
+    // Background sync must not keep an otherwise finished process alive
+    this.autoSyncInterval.unref?.();
   }
 
   /**

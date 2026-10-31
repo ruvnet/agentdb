@@ -96,6 +96,9 @@ export interface LearningBackend {
   }>;
 }
 
+/** How long getPatternStats() results are reused */
+const PATTERN_STATS_TTL_MS = 5 * 60 * 1000;
+
 export class ReasoningBank {
   private db: IDatabaseConnection;
   private embedder: EmbeddingService;
@@ -462,8 +465,9 @@ export class ReasoningBank {
   getPatternStats(): PatternStats {
     // Check cache first
     const cacheKey = 'pattern_stats';
-    if (this.cache.has(cacheKey)) {
-      return this.cache.get(cacheKey);
+    const cached = this.cache.get(cacheKey) as { value: PatternStats; expiresAt: number } | undefined;
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
     }
 
     // Total patterns
@@ -516,9 +520,9 @@ export class ReasoningBank {
       highPerformingPatterns: highPerfRow?.count ?? 0,
     };
 
-    // Cache for 5 minutes
-    this.cache.set(cacheKey, stats);
-    setTimeout(() => this.cache.delete(cacheKey), 5 * 60 * 1000);
+    // Cache for 5 minutes. Expiry is checked on read: a timer here kept every
+    // short-lived process that called getPatternStats() alive for 5 minutes.
+    this.cache.set(cacheKey, { value: stats, expiresAt: Date.now() + PATTERN_STATS_TTL_MS });
 
     return stats;
   }

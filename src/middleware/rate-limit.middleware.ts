@@ -272,6 +272,7 @@ class SlidingWindowRateLimiter {
     this.cleanupInterval = setInterval(() => {
       this.cleanup();
     }, 60 * 1000);
+    this.cleanupInterval.unref?.();
   }
 
   middleware = (req: Request, res: Response, next: NextFunction): void => {

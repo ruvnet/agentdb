@@ -363,6 +363,8 @@ export class FederatedLearningManager {
     this.aggregationTimer = setInterval(async () => {
       await this.aggregateAll();
     }, intervalMs);
+    // Background maintenance: don't hold the process open on its own
+    this.aggregationTimer.unref?.();
   }
 
   /**

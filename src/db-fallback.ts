@@ -316,6 +316,8 @@ function createSqlJsWrapper(SQL: any) {
           console.warn(`⚠️  Detected ${this.activeStatements.size} active SQL statements - possible memory leak`);
         }
       }, 10000);
+      // Diagnostic only: must not keep a process alive that never calls close()
+      this.intervalId.unref?.();
     }
 
     prepare(sql: string) {

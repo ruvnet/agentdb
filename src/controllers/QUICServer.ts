@@ -472,6 +472,8 @@ export class QUICServer {
         }
       }
     }, 60000); // Run every minute
+    // The server socket keeps a running server alive; this sweep must not
+    this.cleanupInterval.unref?.();
   }
 
   /**
