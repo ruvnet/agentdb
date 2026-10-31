@@ -1,6 +1,7 @@
 export type AgentDbMcpProfile = 'readonly' | 'retrieval' | 'learning' | 'admin';
 
 const READONLY_TOOLS = [
+  'agentdb_capabilities',
   'agentdb_search',
   'agentdb_pattern_search',
   'agentdb_pattern_stats',

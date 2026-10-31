@@ -127,6 +127,19 @@ try {
   });
   await response(3);
 
+  // Probes native packages (NativeAccelerator, backend detection): none of
+  // them may write to stdout
+  send({
+    jsonrpc: '2.0',
+    id: 4,
+    method: 'tools/call',
+    params: { name: 'agentdb_capabilities', arguments: {} },
+  });
+  const capabilities = await response(4, 60_000);
+  if (capabilities.result?.isError || !JSON.parse(capabilities.result?.content?.[0]?.text ?? 'null')?.nativeAccelerator) {
+    throw new Error(`agentdb_capabilities failed: ${JSON.stringify(capabilities)}`);
+  }
+
   await new Promise((resolve) => setTimeout(resolve, 100));
   if (stdoutBuffer.trim()) {
     throw new Error(`MCP stdout ended with incomplete protocol data: ${stdoutBuffer}`);

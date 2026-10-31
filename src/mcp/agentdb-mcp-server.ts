@@ -13,7 +13,11 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 // Database type from db-fallback
 type Database = any;
-import { createDatabase } from '../db-fallback.js';
+import { createDatabase, getDatabaseInfo } from '../db-fallback.js';
+import { NativeAccelerator } from '../backends/rvf/NativeAccelerator.js';
+import { detectBackends } from '../backends/factory.js';
+import { DEFAULT_EXACT_SEARCH_THRESHOLD } from '../backends/VectorBackend.js';
+import { DEFAULT_RERANK_WEIGHTS } from '../controllers/ReasoningBank.js';
 import { CausalMemoryGraph } from '../controllers/CausalMemoryGraph.js';
 import { CausalRecall } from '../controllers/CausalRecall.js';
 import { ReflexionMemory } from '../controllers/ReflexionMemory.js';
@@ -305,6 +309,41 @@ const learningSystem = new LearningSystem(db, embeddingService);
 const batchOps = new BatchOperations(db, embeddingService);
 const reasoningBank = new ReasoningBank(db, embeddingService);
 const caches = new MCPToolCaches();
+
+// agentdb_capabilities: native probing is done once, on first request
+let acceleratorProbe: Promise<NativeAccelerator> | null = null;
+async function describeCapabilities(): Promise<Record<string, unknown>> {
+  acceleratorProbe ??= (async () => {
+    const accelerator = new NativeAccelerator();
+    await accelerator.initialize();
+    return accelerator;
+  })();
+  const [accelerator, detected] = await Promise.all([acceleratorProbe, detectBackends()]);
+  const exactThreshold = Number(process.env.AGENTDB_EXACT_SEARCH_THRESHOLD);
+  return {
+    nativeAccelerator: accelerator.capabilities(),
+    vectorBackend: {
+      // This server's controllers are built without a vector index: every
+      // search here is an exact cosine scan over the SQL embedding tables.
+      inUse: 'sql-exact-scan',
+      available: detected.available,
+      ruvector: detected.ruvector,
+      rvf: detected.rvf,
+      hnswlib: detected.hnswlib,
+      sqljsRvf: detected.sqljsRvf,
+      ruvectorBackendEnv: process.env.RUVECTOR_BACKEND ?? null,
+    },
+    sqlDriver: getDatabaseInfo(),
+    embedding: embeddingService.getRuntimeInfo(),
+    retrieval: {
+      exactSearchThreshold: Number.isFinite(exactThreshold) && exactThreshold >= 0
+        ? exactThreshold
+        : DEFAULT_EXACT_SEARCH_THRESHOLD,
+      patternRerankWeights: DEFAULT_RERANK_WEIGHTS,
+    },
+    mcpProfile: toolPolicy.profile,
+  };
+}
 
 // ============================================================================
 // MCP Server Setup
@@ -805,6 +844,14 @@ const tools = [
         latency_ms: { type: 'number', minimum: 0, description: 'Observed latency in milliseconds (optional)' },
       },
       required: ['skill_id'],
+    },
+  },
+  {
+    name: 'agentdb_capabilities',
+    description: 'Report what this AgentDB server is running on: native accelerator features that loaded, the vector backend in use and the ones available, the SQL driver, the embedding model and dimension (and whether it is the hash fallback), and the ranking defaults. Read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
     },
   },
   {
@@ -1672,6 +1719,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               avgLatencyMs: row.avg_latency_ms,
             }, null, 2),
           }],
+        };
+      }
+
+      case 'agentdb_capabilities': {
+        return {
+          content: [{ type: 'text', text: JSON.stringify(await describeCapabilities(), null, 2) }],
         };
       }
 

@@ -239,6 +239,19 @@ export class EmbeddingService {
   }
 
   /**
+   * What actually produces embeddings: the configured model, or the
+   * deterministic hash fallback when the model did not load (or is disabled).
+   */
+  getRuntimeInfo(): { model: string; dimension: number; provider: string; active: 'transformers' | 'openai' | 'mock' } {
+    const active = this.config.provider === 'transformers' && this.pipeline
+      ? 'transformers'
+      : this.config.provider === 'openai' && this.config.apiKey
+        ? 'openai'
+        : 'mock';
+    return { model: this.config.model, dimension: this.config.dimension, provider: this.config.provider, active };
+  }
+
+  /**
    * Batch embed multiple texts
    */
   async embedBatch(texts: string[]): Promise<Float32Array[]> {
