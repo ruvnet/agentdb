@@ -1,0 +1,37 @@
+name: Claude Code plugin
+
+on:
+  pull_request:
+    paths:
+      - 'plugins/**'
+      - '.claude-plugin/**'
+      - '.github/workflows/plugin.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'plugins/**'
+      - '.claude-plugin/**'
+      - '.github/workflows/plugin.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  agentdb-plugin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Structural contract (no claude on PATH)
+        run: bash plugins/agentdb/scripts/smoke.sh
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code@latest
+      - name: Validate marketplace and plugin
+        run: |
+          claude plugin validate .
+          claude plugin validate plugins/agentdb
+      - name: Mod tests
+        run: claude plugin test plugins/agentdb

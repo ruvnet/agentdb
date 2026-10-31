@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "agentdb": {
+      "command": "npx",
+      "args": ["-y", "agentdb@3.1.0", "mcp", "start"],
+      "env": {
+        "AGENTDB_MCP_PROFILE": "${user_config.mcp_profile}",
+        "AGENTDB_PATH": "${user_config.db_path}",
+        "AGENTDB_MCP_ALLOW": "${user_config.mcp_allow}",
+        "AGENTDB_MCP_DENY": "${user_config.mcp_deny}"
+      }
+    }
+  }
+}
