@@ -396,15 +396,17 @@ function createSqlJsWrapper(SQL: any) {
           try {
             stmt.bind(params);
             const results: Record<string, unknown>[] = [];
+            // Column names are fixed for one execution; read them once, not per row
+            let columns: string[] | null = null;
 
             while (stmt.step()) {
-              const columns = stmt.getColumnNames();
+              if (!columns) columns = stmt.getColumnNames() as string[];
               const values = stmt.get();
 
               const result: Record<string, unknown> = {};
-              columns.forEach((col: string, idx: number) => {
-                result[col] = values[idx];
-              });
+              for (let idx = 0; idx < columns.length; idx++) {
+                result[columns[idx]] = values[idx];
+              }
 
               results.push(result);
             }
@@ -603,11 +605,13 @@ export function wrapExistingSqlJsDatabase(rawDb: any, filename: string = ':memor
           try {
             stmt.bind(params);
             const results: Record<string, unknown>[] = [];
+            // Column names are fixed for one execution; read them once, not per row
+            let columns: string[] | null = null;
             while (stmt.step()) {
-              const columns = stmt.getColumnNames();
+              if (!columns) columns = stmt.getColumnNames() as string[];
               const values = stmt.get();
               const result: Record<string, unknown> = {};
-              columns.forEach((col: string, idx: number) => { result[col] = values[idx]; });
+              for (let idx = 0; idx < columns.length; idx++) result[columns[idx]] = values[idx];
               results.push(result);
             }
             stmt.reset();

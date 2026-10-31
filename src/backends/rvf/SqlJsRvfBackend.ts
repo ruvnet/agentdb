@@ -103,6 +103,10 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
   // sql.js database handle
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private db: any = null;
+  // Cached upsert statement. sql.js frees every prepared statement on
+  // export() and close(), so it is dropped there and re-prepared lazily.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private upsertStmt: any = null;
   private dim: number;
   private metricType: 'cosine' | 'l2' | 'ip';
   private initialized = false;
@@ -224,6 +228,7 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
     const targetPath = savePath || this.storagePath;
     if (targetPath === ':memory:') return;
     validatePath(targetPath);
+    this.upsertStmt = null; // freed by export()
     const data: Uint8Array = this.db.export();
     const expectedState = targetPath === this.storagePath
       ? this.fileState!
@@ -240,6 +245,7 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
     const SQL = await initSqlJs();
     if (this.db) {
       this._unregisterFromFinalization();
+      this.upsertStmt = null; // freed by close()
       this.db.close();
     }
     this.db = new SQL.Database(loaded.data);
@@ -256,6 +262,7 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
     if (this.db) {
       try {
         this.flushSync();
+        this.upsertStmt = null; // freed by export()/close()
         if (this.storagePath !== ':memory:') {
           const data: Uint8Array = this.db.export();
           this.fileState = persistSqlJsDatabase(this.storagePath, data, this.fileState!);
@@ -455,10 +462,12 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
   private writeVector(id: string, vec: Float32Array, metadata?: Record<string, unknown>): void {
     const blob = new Uint8Array(vec.buffer, vec.byteOffset, vec.byteLength);
     const metaStr = metadata ? JSON.stringify(metadata) : null;
-    this.db.run(
-      'INSERT OR REPLACE INTO rvf_vectors (id, embedding, metadata) VALUES (?, ?, ?)',
-      [id, blob, metaStr],
-    );
+    if (!this.upsertStmt) {
+      this.upsertStmt = this.db.prepare(
+        'INSERT OR REPLACE INTO rvf_vectors (id, embedding, metadata) VALUES (?, ?, ?)',
+      );
+    }
+    this.upsertStmt.run([id, blob, metaStr]);
     this.cache.set(id, { embedding: new Float32Array(vec), metadata });
   }
 
