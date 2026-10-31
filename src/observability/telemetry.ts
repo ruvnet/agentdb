@@ -124,15 +124,21 @@ export class TelemetryManager {
       // Dynamic import of OpenTelemetry packages
       const otelApi = await import('@opentelemetry/api');
       const { NodeSDK } = await import('@opentelemetry/sdk-node');
-      const { Resource } = await import('@opentelemetry/resources');
+      const resources: any = await import('@opentelemetry/resources');
       const { SemanticResourceAttributes } = await import('@opentelemetry/semantic-conventions');
 
-      // Create resource with service information
-      const resource = new Resource({
+      // Create resource with service information. @opentelemetry/resources 2.x
+      // (required by sdk-node >= 0.220, which carries the propagator-jaeger and
+      // core advisory fixes) replaced the `Resource` class with
+      // `resourceFromAttributes`; keep the 1.x constructor as a fallback.
+      const attributes = {
         [SemanticResourceAttributes.SERVICE_NAME]: this.config.serviceName,
         [SemanticResourceAttributes.SERVICE_VERSION]: this.config.serviceVersion,
         ...this.config.resourceAttributes,
-      });
+      };
+      const resource = typeof resources.resourceFromAttributes === 'function'
+        ? resources.resourceFromAttributes(attributes)
+        : new resources.Resource(attributes);
 
       // Basic SDK initialization without complex exporters for now
       // Cast resource to any to bridge the minor type incompatibility between
