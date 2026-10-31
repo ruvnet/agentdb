@@ -16,6 +16,7 @@ import { searchVectors } from '../backends/VectorBackend.js';
 import type { GraphDatabaseAdapter } from '../backends/graph/GraphDatabaseAdapter.js';
 import { NodeIdMapper } from '../utils/NodeIdMapper.js';
 import { QueryCache, type QueryCacheConfig } from '../core/QueryCache.js';
+import { TopK, squaredNorm, cosineWithQueryNorm, blobToFloat32 } from '../utils/top-k.js';
 
 /** Vector ids this controller writes: "skill:<rowid>" */
 const SKILL_VECTOR_ID = /^skill:(\d+)$/;
@@ -353,42 +354,38 @@ export class SkillLibrary {
     `);
     const rows = stmt.all(minSuccessRate);
 
-    // Compute similarities
-    const skillsWithSimilarity: (Skill & { similarity: number })[] = [];
+    // Bounded top-k by composite score; JSON columns are parsed for the
+    // winners only. Ties keep scan order, as the old stable sort did.
+    const queryNorm = Math.sqrt(squaredNorm(queryEmbedding));
+    const top = new TopK<{ row: (typeof rows)[number]; similarity: number }>(k);
     for (const row of rows) {
       if (!row.embedding) continue;
 
-      const embedding = new Float32Array(
-        row.embedding.buffer,
-        row.embedding.byteOffset,
-        row.embedding.byteLength / 4
-      );
-      const similarity = this.cosineSimilarity(queryEmbedding, embedding);
-
-      skillsWithSimilarity.push({
-        id: row.id,
+      const similarity = cosineWithQueryNorm(queryEmbedding, queryNorm, blobToFloat32(row.embedding));
+      const score = this.computeSkillScore({
         name: row.name,
-        description: row.description ?? undefined,
-        signature: safeJsonParse(row.signature, undefined) as Skill["signature"],
-        code: row.code ?? undefined,
         successRate: row.success_rate,
         uses: row.uses,
         avgReward: row.avg_reward,
-        avgLatencyMs: row.avg_latency_ms,
-        createdFromEpisode: row.created_from_episode ?? undefined,
-        metadata: safeJsonParse(row.metadata, undefined),
         similarity,
       });
+      top.push(score, { row, similarity });
     }
 
-    // Sort by composite score
-    skillsWithSimilarity.sort((a, b) => {
-      const scoreA = this.computeSkillScore(a);
-      const scoreB = this.computeSkillScore(b);
-      return scoreB - scoreA;
-    });
-
-    return skillsWithSimilarity.slice(0, k);
+    return top.sorted().map(({ item: { row, similarity } }) => ({
+      id: row.id,
+      name: row.name,
+      description: row.description ?? undefined,
+      signature: safeJsonParse(row.signature, undefined) as Skill["signature"],
+      code: row.code ?? undefined,
+      successRate: row.success_rate,
+      uses: row.uses,
+      avgReward: row.avg_reward,
+      avgLatencyMs: row.avg_latency_ms,
+      createdFromEpisode: row.created_from_episode ?? undefined,
+      metadata: safeJsonParse(row.metadata, undefined),
+      similarity,
+    }));
   }
 
   /**

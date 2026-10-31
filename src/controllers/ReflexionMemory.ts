@@ -18,6 +18,7 @@ import type { GraphBackend, GraphNode } from '../backends/GraphBackend.js';
 import type { GraphDatabaseAdapter } from '../backends/graph/GraphDatabaseAdapter.js';
 import { NodeIdMapper } from '../utils/NodeIdMapper.js';
 import { QueryCache, type QueryCacheConfig } from '../core/QueryCache.js';
+import { TopK, squaredNorm, cosineWithQueryNorm } from '../utils/top-k.js';
 
 function finiteNumber(value: unknown, name: string): number {
   const n = Number(value);
@@ -436,16 +437,19 @@ export class ReflexionMemory {
 
     const rows = stmt.all(...params);
 
-    // Calculate similarities and convert
-    const episodes: EpisodeWithEmbedding[] = rows.map((row) => {
+    // Bounded top-k over the scan; only the winners are converted. Ordering
+    // matches the old sort on (similarity || 0) with scan order on ties.
+    const queryNorm = Math.sqrt(squaredNorm(queryEmbedding));
+    const top = new TopK<{ row: (typeof rows)[number]; embedding: Float32Array; similarity: number }>(k);
+    for (const row of rows) {
       const embedding = this.deserializeEmbedding(row.embedding);
-      const similarity = this.cosineSimilarity(queryEmbedding, embedding);
-      return this.convertDatabaseEpisode(row, similarity, embedding);
-    });
+      const similarity = cosineWithQueryNorm(queryEmbedding, queryNorm, embedding);
+      top.push(similarity || 0, { row, embedding, similarity });
+    }
 
-    // Sort by similarity and return top-k
-    episodes.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
-    return episodes.slice(0, k);
+    return top
+      .sorted()
+      .map(({ item }) => this.convertDatabaseEpisode(item.row, item.similarity, item.embedding));
   }
 
   /**
