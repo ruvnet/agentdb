@@ -10,12 +10,17 @@ import * as crypto from 'crypto';
 
 describe('ModelCacheLoader', () => {
   let tempDir: string;
+  const savedXdg = process.env.XDG_CACHE_HOME;
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentdb-model-test-'));
+    // Keep extraction out of the real ~/.cache
+    process.env.XDG_CACHE_HOME = path.join(tempDir, 'xdg-cache');
   });
 
   afterEach(() => {
+    if (savedXdg === undefined) delete process.env.XDG_CACHE_HOME;
+    else process.env.XDG_CACHE_HOME = savedXdg;
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
