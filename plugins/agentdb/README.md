@@ -13,6 +13,14 @@ They can be installed together. The servers have different names (`agentdb` here
 
 The other plugins in this marketplace (`agentdb-core`, `agentdb-memory`, `agentdb-causal`, `agentdb-learning`, `agentdb-graph`, `agentdb-search`) add commands and skills that call a server named `agentdb`. This plugin supplies that server.
 
+### First launch
+
+The MCP server runs through `npx -y agentdb@<version>`. The first launch downloads the package and its native dependencies, which took about 30 seconds on a cold cache in testing. That is right at Claude Code's default 30-second MCP startup timeout, so the first session can show the server as failed. Either:
+
+- warm the cache once: `npx -y agentdb@3.1.0 --version`, or
+- after the download finishes, run `/mcp` and reconnect, or
+- raise the timeout: `MCP_TIMEOUT=90000 claude`.
+
 ## Install
 
 ```
