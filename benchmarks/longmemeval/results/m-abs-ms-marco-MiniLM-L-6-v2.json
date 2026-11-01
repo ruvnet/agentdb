@@ -1,0 +1,343 @@
+{
+  "split": "m",
+  "model": "Xenova/all-MiniLM-L6-v2",
+  "questions": 500,
+  "seconds": 137.86,
+  "configs": [
+    {
+      "name": "dense only (same chunks, MiniLM, max per session)",
+      "metrics": {
+        "recall_any@5": 0.854,
+        "recall_all@5": 0.616,
+        "ndcg@5": 0.6788,
+        "recall_any@10": 0.916,
+        "recall_all@10": 0.734,
+        "ndcg@10": 0.7168
+      },
+      "byType": {
+        "single-session-assistant": {
+          "n": 56,
+          "recall_any@5": 1,
+          "recall_all@5": 1,
+          "ndcg@5": 1,
+          "recall_any@10": 1,
+          "recall_all@10": 1,
+          "ndcg@10": 1
+        },
+        "single-session-user": {
+          "n": 70,
+          "recall_any@5": 0.786,
+          "recall_all@5": 0.786,
+          "ndcg@5": 0.669,
+          "recall_any@10": 0.843,
+          "recall_all@10": 0.843,
+          "ndcg@10": 0.688
+        },
+        "multi-session": {
+          "n": 133,
+          "recall_any@5": 0.857,
+          "recall_all@5": 0.398,
+          "ndcg@5": 0.585,
+          "recall_any@10": 0.932,
+          "recall_all@10": 0.571,
+          "ndcg@10": 0.65
+        },
+        "knowledge-update": {
+          "n": 78,
+          "recall_any@5": 0.936,
+          "recall_all@5": 0.795,
+          "ndcg@5": 0.796,
+          "recall_any@10": 0.974,
+          "recall_all@10": 0.897,
+          "ndcg@10": 0.824
+        },
+        "temporal-reasoning": {
+          "n": 133,
+          "recall_any@5": 0.827,
+          "recall_all@5": 0.474,
+          "ndcg@5": 0.6,
+          "recall_any@10": 0.895,
+          "recall_all@10": 0.617,
+          "ndcg@10": 0.639
+        },
+        "single-session-preference": {
+          "n": 30,
+          "recall_any@5": 0.633,
+          "recall_all@5": 0.633,
+          "ndcg@5": 0.563,
+          "recall_any@10": 0.8,
+          "recall_all@10": 0.8,
+          "ndcg@10": 0.619
+        }
+      }
+    },
+    {
+      "name": "bm25 only",
+      "metrics": {
+        "recall_any@5": 0.89,
+        "recall_all@5": 0.684,
+        "ndcg@5": 0.735,
+        "recall_any@10": 0.92,
+        "recall_all@10": 0.754,
+        "ndcg@10": 0.7582
+      },
+      "byType": {
+        "single-session-assistant": {
+          "n": 56,
+          "recall_any@5": 1,
+          "recall_all@5": 1,
+          "ndcg@5": 0.993,
+          "recall_any@10": 1,
+          "recall_all@10": 1,
+          "ndcg@10": 0.993
+        },
+        "single-session-user": {
+          "n": 70,
+          "recall_any@5": 0.943,
+          "recall_all@5": 0.943,
+          "ndcg@5": 0.795,
+          "recall_any@10": 0.957,
+          "recall_all@10": 0.957,
+          "ndcg@10": 0.8
+        },
+        "multi-session": {
+          "n": 133,
+          "recall_any@5": 0.88,
+          "recall_all@5": 0.444,
+          "ndcg@5": 0.628,
+          "recall_any@10": 0.932,
+          "recall_all@10": 0.556,
+          "ndcg@10": 0.669
+        },
+        "knowledge-update": {
+          "n": 78,
+          "recall_any@5": 0.987,
+          "recall_all@5": 0.872,
+          "ndcg@5": 0.892,
+          "recall_any@10": 1,
+          "recall_all@10": 0.949,
+          "ndcg@10": 0.909
+        },
+        "temporal-reasoning": {
+          "n": 133,
+          "recall_any@5": 0.857,
+          "recall_all@5": 0.586,
+          "ndcg@5": 0.682,
+          "recall_any@10": 0.887,
+          "recall_all@10": 0.669,
+          "ndcg@10": 0.711
+        },
+        "single-session-preference": {
+          "n": 30,
+          "recall_any@5": 0.5,
+          "recall_all@5": 0.5,
+          "ndcg@5": 0.413,
+          "recall_any@10": 0.567,
+          "recall_all@10": 0.567,
+          "ndcg@10": 0.435
+        }
+      }
+    },
+    {
+      "name": "hybrid rrf 1:1 max",
+      "metrics": {
+        "recall_any@5": 0.898,
+        "recall_all@5": 0.7,
+        "ndcg@5": 0.7363,
+        "recall_any@10": 0.94,
+        "recall_all@10": 0.79,
+        "ndcg@10": 0.768
+      },
+      "byType": {
+        "single-session-assistant": {
+          "n": 56,
+          "recall_any@5": 1,
+          "recall_all@5": 1,
+          "ndcg@5": 1,
+          "recall_any@10": 1,
+          "recall_all@10": 1,
+          "ndcg@10": 1
+        },
+        "single-session-user": {
+          "n": 70,
+          "recall_any@5": 0.886,
+          "recall_all@5": 0.886,
+          "ndcg@5": 0.754,
+          "recall_any@10": 0.9,
+          "recall_all@10": 0.9,
+          "ndcg@10": 0.758
+        },
+        "multi-session": {
+          "n": 133,
+          "recall_any@5": 0.91,
+          "recall_all@5": 0.466,
+          "ndcg@5": 0.65,
+          "recall_any@10": 0.962,
+          "recall_all@10": 0.639,
+          "ndcg@10": 0.71
+        },
+        "knowledge-update": {
+          "n": 78,
+          "recall_any@5": 0.974,
+          "recall_all@5": 0.923,
+          "ndcg@5": 0.881,
+          "recall_any@10": 0.987,
+          "recall_all@10": 0.949,
+          "ndcg@10": 0.889
+        },
+        "temporal-reasoning": {
+          "n": 133,
+          "recall_any@5": 0.857,
+          "recall_all@5": 0.586,
+          "ndcg@5": 0.671,
+          "recall_any@10": 0.917,
+          "recall_all@10": 0.699,
+          "ndcg@10": 0.713
+        },
+        "single-session-preference": {
+          "n": 30,
+          "recall_any@5": 0.667,
+          "recall_all@5": 0.667,
+          "ndcg@5": 0.503,
+          "recall_any@10": 0.8,
+          "recall_all@10": 0.8,
+          "ndcg@10": 0.545
+        }
+      }
+    },
+    {
+      "name": "hybrid 1:1 + CE x8",
+      "metrics": {
+        "recall_any@5": 0.93,
+        "recall_all@5": 0.766,
+        "ndcg@5": 0.8098,
+        "recall_any@10": 0.954,
+        "recall_all@10": 0.86,
+        "ndcg@10": 0.8342
+      },
+      "byType": {
+        "single-session-assistant": {
+          "n": 56,
+          "recall_any@5": 1,
+          "recall_all@5": 1,
+          "ndcg@5": 1,
+          "recall_any@10": 1,
+          "recall_all@10": 1,
+          "ndcg@10": 1
+        },
+        "single-session-user": {
+          "n": 70,
+          "recall_any@5": 0.943,
+          "recall_all@5": 0.943,
+          "ndcg@5": 0.873,
+          "recall_any@10": 0.957,
+          "recall_all@10": 0.957,
+          "ndcg@10": 0.877
+        },
+        "multi-session": {
+          "n": 133,
+          "recall_any@5": 0.955,
+          "recall_all@5": 0.594,
+          "ndcg@5": 0.758,
+          "recall_any@10": 0.985,
+          "recall_all@10": 0.767,
+          "ndcg@10": 0.803
+        },
+        "knowledge-update": {
+          "n": 78,
+          "recall_any@5": 1,
+          "recall_all@5": 0.962,
+          "ndcg@5": 0.946,
+          "recall_any@10": 1,
+          "recall_all@10": 0.987,
+          "ndcg@10": 0.95
+        },
+        "temporal-reasoning": {
+          "n": 133,
+          "recall_any@5": 0.925,
+          "recall_all@5": 0.692,
+          "ndcg@5": 0.762,
+          "recall_any@10": 0.932,
+          "recall_all@10": 0.805,
+          "ndcg@10": 0.788
+        },
+        "single-session-preference": {
+          "n": 30,
+          "recall_any@5": 0.5,
+          "recall_all@5": 0.5,
+          "ndcg@5": 0.399,
+          "recall_any@10": 0.7,
+          "recall_all@10": 0.7,
+          "ndcg@10": 0.465
+        }
+      }
+    },
+    {
+      "name": "hybrid 1:1 + CE x16",
+      "metrics": {
+        "recall_any@5": 0.928,
+        "recall_all@5": 0.766,
+        "ndcg@5": 0.8161,
+        "recall_any@10": 0.952,
+        "recall_all@10": 0.856,
+        "ndcg@10": 0.8397
+      },
+      "byType": {
+        "single-session-assistant": {
+          "n": 56,
+          "recall_any@5": 1,
+          "recall_all@5": 1,
+          "ndcg@5": 1,
+          "recall_any@10": 1,
+          "recall_all@10": 1,
+          "ndcg@10": 1
+        },
+        "single-session-user": {
+          "n": 70,
+          "recall_any@5": 0.929,
+          "recall_all@5": 0.929,
+          "ndcg@5": 0.882,
+          "recall_any@10": 0.957,
+          "recall_all@10": 0.957,
+          "ndcg@10": 0.891
+        },
+        "multi-session": {
+          "n": 133,
+          "recall_any@5": 0.955,
+          "recall_all@5": 0.602,
+          "ndcg@5": 0.766,
+          "recall_any@10": 0.985,
+          "recall_all@10": 0.767,
+          "ndcg@10": 0.811
+        },
+        "knowledge-update": {
+          "n": 78,
+          "recall_any@5": 1,
+          "recall_all@5": 0.962,
+          "ndcg@5": 0.954,
+          "recall_any@10": 1,
+          "recall_all@10": 0.987,
+          "ndcg@10": 0.959
+        },
+        "temporal-reasoning": {
+          "n": 133,
+          "recall_any@5": 0.925,
+          "recall_all@5": 0.692,
+          "ndcg@5": 0.771,
+          "recall_any@10": 0.932,
+          "recall_all@10": 0.797,
+          "ndcg@10": 0.794
+        },
+        "single-session-preference": {
+          "n": 30,
+          "recall_any@5": 0.5,
+          "recall_all@5": 0.5,
+          "ndcg@5": 0.386,
+          "recall_any@10": 0.667,
+          "recall_all@10": 0.667,
+          "ndcg@10": 0.438
+        }
+      }
+    }
+  ]
+}

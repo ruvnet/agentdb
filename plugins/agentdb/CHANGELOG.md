@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.2.0]
+
+- `.mcp.json` starts `agentdb@3.2.0`: `agentdb_search` fuses BM25 keyword ranking with vector ranking by default, and takes `rerank: true` for a local cross-encoder (agentdb ADR-016).
+- `agentdb-vector-memory` skill: when to use `rerank: true`.
+
 ## [3.1.0]
 
 First release of the `agentdb` Claude Code plugin. Its version follows the `agentdb` npm package it starts.

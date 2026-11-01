@@ -17,7 +17,7 @@ The other plugins in this marketplace (`agentdb-core`, `agentdb-memory`, `agentd
 
 The MCP server runs through `npx -y agentdb@<version>`. The first launch downloads the package and its native dependencies, which took about 30 seconds on a cold cache in testing. That is right at Claude Code's default 30-second MCP startup timeout, so the first session can show the server as failed. Either:
 
-- warm the cache once: `npx -y agentdb@3.1.0 --version`, or
+- warm the cache once: `npx -y agentdb@3.2.0 --version`, or
 - after the download finishes, run `/mcp` and reconnect, or
 - raise the timeout: `MCP_TIMEOUT=90000 claude`.
 

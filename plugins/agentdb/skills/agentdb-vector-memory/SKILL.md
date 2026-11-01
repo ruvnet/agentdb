@@ -37,7 +37,8 @@ agentdb_pattern_store(taskType: "db-migration", approach: "add the column nullab
 
 | Need | Call |
 |---|---|
-| Facts about a topic | `agentdb_search(query, k: 5, min_similarity: 0.3)` |
+| Facts about a topic | `agentdb_search(query, k: 5, min_similarity: 0.3)`: hybrid keyword + vector ranking by default (agentdb 3.2.0) |
+| Hard recall, quality over speed | `agentdb_search(query, k: 5, rerank: true)`: adds a local cross-encoder over the top candidates (~200 ms; 23 MB model on first use) |
 | How this kind of task went before | `agentdb_pattern_search(task, k: 5)` |
 | Memories ranked by causal utility, with provenance | `recall_with_certificate(query, k: 5)` |
 | What the pattern store holds | `agentdb_pattern_stats()` |

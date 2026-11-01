@@ -211,10 +211,12 @@ describe('ReflexionMemory', () => {
       });
     });
 
-    it('should return episodes sorted by similarity', async () => {
+    it('should return episodes sorted by similarity when hybrid is off', async () => {
+      // The default fuses BM25 with the vector ranking (ADR-016); hybrid: false is the pure-vector order.
       const episodes = await reflexion.retrieveRelevant({
         task: 'authentication security',
         k: 5,
+        hybrid: false,
       });
 
       // Verify descending similarity order
