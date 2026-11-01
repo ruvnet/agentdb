@@ -44,6 +44,8 @@ describe('secret write guard (enforce, the default)', () => {
     expect(await call($, `${PLUGIN}agentdb_skill_feedback`, { success: true, reward: 1, note: `worked with ${TOKEN}` })).toContain('looks like a secret')
     expect(await call($, `${PLUGIN}agentdb_pattern_feedback`, { success: true, reward: 0.8 })).toContain('ran')
     expect(await call($, `${PLUGIN}skill_create_batch`, { skills: [{ name: 'deploy', code: '-----BEGIN RSA PRIVATE KEY-----' }] })).toContain('looks like a secret')
+    expect(await call($, `${PLUGIN}agentdb_update`, { id: 1, text: `rotated to ${TOKEN}` })).toContain('looks like a secret')
+    expect(await call($, `${PLUGIN}skill_update`, { skill_id: 1, code: '-----BEGIN RSA PRIVATE KEY-----' })).toContain('looks like a secret')
   })
 
   test('ordinary memory goes through', async ($, on) => {
@@ -83,7 +85,7 @@ describe('destructive tool guard', () => {
   test('delete, delete_batch, clear_cache and init with reset are refused by default', async ($, on) => {
     const w = world(on)
     await $.session.start(START)
-    for (const tool of ['agentdb_delete', 'agentdb_delete_batch', 'agentdb_clear_cache']) {
+    for (const tool of ['agentdb_delete', 'agentdb_delete_batch', 'agentdb_clear_cache', 'agentdb_pattern_delete', 'skill_delete']) {
       expect(await call($, `${PLUGIN}${tool}`, {})).toContain(`${tool} deletes or resets`)
     }
     expect(await call($, `${MANUAL}agentdb_init`, { reset: true })).toContain('allow_destructive')

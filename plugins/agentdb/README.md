@@ -17,7 +17,7 @@ The other plugins in this marketplace (`agentdb-core`, `agentdb-memory`, `agentd
 
 The MCP server runs through `npx -y agentdb@<version>`. The first launch downloads the package and its native dependencies, which took about 30 seconds on a cold cache in testing. That is right at Claude Code's default 30-second MCP startup timeout, so the first session can show the server as failed. Either:
 
-- warm the cache once: `npx -y agentdb@3.2.0 --version`, or
+- warm the cache once: `npx -y agentdb@3.3.0 --version`, or
 - after the download finishes, run `/mcp` and reconnect, or
 - raise the timeout: `MCP_TIMEOUT=90000 claude`.
 
@@ -36,12 +36,12 @@ Set them with `/plugin configure agentdb@agentdb`, then restart the session so t
 
 | Option | Sets | Default | Effect |
 |---|---|---|---|
-| `mcp_profile` | `AGENTDB_MCP_PROFILE` | empty = `learning` | Which tools the server exposes: `readonly`/`retrieval` (search, stats, recall), `learning` (plus memory writes, reflexion, skills, causal edges, RL and pattern/skill feedback, `agentdb_capabilities`), `admin` (everything, including `agentdb_init`, `agentdb_delete`, `agentdb_delete_batch`, `agentdb_clear_cache`). An unknown name stops the server. |
+| `mcp_profile` | `AGENTDB_MCP_PROFILE` | empty = `learning` | Which tools the server exposes: `readonly`/`retrieval` (search, stats, recall, and get/list of records, patterns and skills), `learning` (plus memory writes and in-place updates, reflexion, skills, causal edges, RL and pattern/skill feedback, `agentdb_capabilities`), `admin` (everything, including `agentdb_init`, `agentdb_delete`, `agentdb_delete_batch`, `agentdb_pattern_delete`, `skill_delete`, `agentdb_clear_cache`). An unknown name stops the server. |
 | `db_path` | `AGENTDB_PATH` | empty = `./agentdb.db` | The database file. Relative paths resolve from the directory Claude Code starts the server in. |
 | `mcp_allow` | `AGENTDB_MCP_ALLOW` | empty | Tool names, comma or space separated, added to the profile. Naming an admin-only tool exposes it; the mod still refuses it unless `allow_destructive` is on. |
 | `mcp_deny` | `AGENTDB_MCP_DENY` | empty | Tool names removed in any profile. |
 | `secret_guard` | (mod) | `enforce` | `enforce` refuses memory writes that hold what looks like a key, token, password or private key; `notify` lets them through with a toast; `off` does not check. |
-| `allow_destructive` | (mod) | `false` | When off, the mod refuses `agentdb_delete`, `agentdb_delete_batch`, `agentdb_clear_cache` and `agentdb_init` with `reset: true` (drops every table in the open database). Deleting data takes both exposing those tools (`mcp_profile=admin`, or naming them in `mcp_allow`) and this option. |
+| `allow_destructive` | (mod) | `false` | When off, the mod refuses `agentdb_delete`, `agentdb_delete_batch`, `agentdb_pattern_delete`, `skill_delete`, `agentdb_clear_cache` and `agentdb_init` with `reset: true` (drops every table in the open database). Deleting data takes both exposing those tools (`mcp_profile=admin`, or naming them in `mcp_allow`) and this option. |
 
 The four server options are passed as environment variables even when empty; the server treats an empty value as unset (`learning` profile, `./agentdb.db`, no extra allow or deny).
 

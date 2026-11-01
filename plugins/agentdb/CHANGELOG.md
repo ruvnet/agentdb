@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.3.0]
+
+- `.mcp.json` starts `agentdb@3.3.0`: get, list and update for stored records, patterns and skills, plus `agentdb_pattern_delete` and `skill_delete` (agentdb ADR-017).
+- The mod screens `agentdb_update`, `agentdb_pattern_update` and `skill_update` for secrets like any write, and refuses `agentdb_pattern_delete` and `skill_delete` unless `allow_destructive` is on.
+
 ## [3.2.0]
 
 - `.mcp.json` starts `agentdb@3.2.0`: `agentdb_search` fuses BM25 keyword ranking with vector ranking by default, and takes `rerank: true` for a local cross-encoder (agentdb ADR-016).

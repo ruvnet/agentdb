@@ -37,10 +37,22 @@ export const WRITERS: ReadonlySet<string> = new Set([
   // agentdb 3.1.0: outcome feedback for the reward-aware rerank; it can carry a free-text note.
   'agentdb_pattern_feedback',
   'agentdb_skill_feedback',
+  // agentdb 3.3.0 (ADR-017): in-place updates write new text and metadata, so they are screened like inserts.
+  'agentdb_update',
+  'agentdb_pattern_update',
+  'skill_update',
 ])
 
 /** The admin-only tools that delete or reset data (ADMIN_ONLY_TOOLS); agentdb_init only with `reset: true`. */
-export const DESTRUCTIVE: ReadonlySet<string> = new Set(['agentdb_delete', 'agentdb_delete_batch', 'agentdb_clear_cache', 'agentdb_init'])
+export const DESTRUCTIVE: ReadonlySet<string> = new Set([
+  'agentdb_delete',
+  'agentdb_delete_batch',
+  'agentdb_clear_cache',
+  'agentdb_init',
+  // agentdb 3.3.0 (ADR-017)
+  'agentdb_pattern_delete',
+  'skill_delete',
+])
 
 /** Whether the guard looks at a call at all. */
 export const isGuarded = (name: string): boolean => {

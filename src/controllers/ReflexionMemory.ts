@@ -18,6 +18,16 @@ import type { LearningBackend } from '../backends/LearningBackend.js';
 import type { GraphBackend, GraphNode } from '../backends/GraphBackend.js';
 import type { GraphDatabaseAdapter } from '../backends/graph/GraphDatabaseAdapter.js';
 import { NodeIdMapper } from '../utils/NodeIdMapper.js';
+import {
+  assertMetadata,
+  assertTags,
+  embeddingBlob,
+  inTransaction,
+  mergeMetadata,
+  toPage,
+  toRecordId,
+  CrudValidationError,
+} from './crud-helpers.js';
 import { QueryCache, type QueryCacheConfig } from '../core/QueryCache.js';
 import { TopK, squaredNorm, cosineWithQueryNorm } from '../utils/top-k.js';
 import {
@@ -945,6 +955,211 @@ export class ReflexionMemory {
     }));
   }
 
+  // ========================================================================
+  // CRUD: get / list / update (ADR-017). Create is storeEpisode, delete is deleteEpisode.
+  // ========================================================================
+
+  /** Fields an episode update may change. Ids, timestamps and the session are fixed at creation. */
+  private static readonly EPISODE_PATCH_FIELDS = new Set([
+    'task', 'input', 'output', 'critique', 'reward', 'success', 'latencyMs', 'tokensUsed', 'tags', 'metadata',
+  ]);
+
+  /** The SQL id and the graph-node id of an episode differ under a graph backend, so id-addressed CRUD would hit the wrong row. */
+  private assertSqlAddressable(op: string): void {
+    if (this.graphBackend) {
+      throw new CrudValidationError(
+        `${op} addresses episodes by SQL id and is not available when a graph backend is configured`,
+        'id',
+      );
+    }
+  }
+
+  /**
+   * Fetch one episode by id. Returns null when it does not exist.
+   * The embedding is only read when `includeEmbedding` is set.
+   */
+  getEpisode(id: number | string, options: { includeEmbedding?: boolean } = {}): EpisodeWithEmbedding | null {
+    this.assertSqlAddressable('getEpisode');
+    const episodeId = toRecordId(id);
+    const row = this.db.prepare<DatabaseRows.Episode>('SELECT * FROM episodes WHERE id = ?').get(episodeId);
+    if (!row) return null;
+    let embedding: Float32Array | undefined;
+    if (options.includeEmbedding) {
+      const e = this.db
+        .prepare<{ embedding: Buffer }>('SELECT embedding FROM episode_embeddings WHERE episode_id = ?')
+        .get(episodeId);
+      if (e?.embedding) embedding = this.deserializeEmbedding(e.embedding);
+    }
+    return this.convertDatabaseEpisode(row, undefined, embedding);
+  }
+
+  /**
+   * Page through episodes, newest first by default. `total` counts every match, not just this page.
+   */
+  listEpisodes(options: {
+    sessionId?: string;
+    success?: boolean;
+    limit?: number;
+    offset?: number;
+    order?: 'newest' | 'oldest';
+  } = {}): { items: Episode[]; total: number; limit: number; offset: number } {
+    this.assertSqlAddressable('listEpisodes');
+    const { limit, offset } = toPage(options.limit, options.offset);
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (options.sessionId !== undefined) {
+      if (typeof options.sessionId !== 'string' || !options.sessionId) {
+        throw new CrudValidationError('sessionId must be a non-empty string', 'sessionId');
+      }
+      where.push('session_id = ?');
+      params.push(options.sessionId);
+    }
+    if (options.success !== undefined) {
+      where.push('success = ?');
+      params.push(options.success ? 1 : 0);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const dir = options.order === 'oldest' ? 'ASC' : 'DESC';
+    const total = this.db.prepare<{ c: number }>(`SELECT COUNT(*) AS c FROM episodes ${whereSql}`).get(...params)?.c ?? 0;
+    const rows = this.db
+      .prepare<DatabaseRows.Episode>(`SELECT * FROM episodes ${whereSql} ORDER BY id ${dir} LIMIT ? OFFSET ?`)
+      .all(...params, limit, offset);
+    return { items: rows.map(r => this.convertDatabaseEpisode(r)), total, limit, offset };
+  }
+
+  /**
+   * Update an episode in place, keeping its id.
+   *
+   * Every store moves together: the SQL row, `episode_embeddings`, the vector backend (when present),
+   * the query cache and the BM25 index. The embedding is recomputed only when a field it is built from
+   * (task, critique, output) changes, so a metadata-, tag- or reward-only update never calls the embedder.
+   *
+   * Patch semantics: an absent/undefined field is left alone; `null` clears a nullable field.
+   * `metadata` is merged by default (a `null` value removes that key); pass `{ replaceMetadata: true }`
+   * to replace it. Returns null when the episode does not exist.
+   */
+  async updateEpisode(
+    id: number | string,
+    patch: Partial<{
+      task: string;
+      input: string | null;
+      output: string | null;
+      critique: string | null;
+      reward: number;
+      success: boolean;
+      latencyMs: number | null;
+      tokensUsed: number | null;
+      tags: string[] | null;
+      metadata: Record<string, unknown> | null;
+    }>,
+    options: { replaceMetadata?: boolean } = {},
+  ): Promise<{ episode: Episode; reembedded: boolean; changedFields: string[] } | null> {
+    this.assertSqlAddressable('updateEpisode');
+    const episodeId = toRecordId(id);
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+      throw new CrudValidationError('patch must be an object', 'patch');
+    }
+    const keys = Object.keys(patch).filter(k => (patch as Record<string, unknown>)[k] !== undefined);
+    for (const k of keys) {
+      if (!ReflexionMemory.EPISODE_PATCH_FIELDS.has(k)) {
+        throw new CrudValidationError(`"${k}" cannot be updated`, k);
+      }
+    }
+
+    const current = this.db.prepare<DatabaseRows.Episode>('SELECT * FROM episodes WHERE id = ?').get(episodeId);
+    if (!current) return null;
+    if (keys.length === 0) return { episode: this.convertDatabaseEpisode(current), reembedded: false, changedFields: [] };
+
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    const set = (column: string, value: unknown) => { sets.push(`${column} = ?`); values.push(value); };
+    const optionalText = (field: string, v: unknown): string | null => {
+      if (v === null) return null;
+      if (typeof v !== 'string') throw new CrudValidationError(`${field} must be a string or null`, field);
+      return v;
+    };
+    const optionalCount = (field: string, v: unknown): number | null => {
+      if (v === null) return null;
+      if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 0) {
+        throw new CrudValidationError(`${field} must be a non-negative integer or null`, field);
+      }
+      return v;
+    };
+
+    const next = { task: current.task, input: current.input, output: current.output, critique: current.critique };
+    if (patch.task !== undefined) {
+      if (typeof patch.task !== 'string' || !patch.task.trim()) throw new CrudValidationError('task must be a non-empty string', 'task');
+      next.task = patch.task;
+      set('task', patch.task);
+    }
+    if (patch.input !== undefined) { next.input = optionalText('input', patch.input); set('input', next.input); }
+    if (patch.output !== undefined) { next.output = optionalText('output', patch.output); set('output', next.output); }
+    if (patch.critique !== undefined) { next.critique = optionalText('critique', patch.critique); set('critique', next.critique); }
+    if (patch.reward !== undefined) {
+      if (typeof patch.reward !== 'number' || !Number.isFinite(patch.reward)) throw new CrudValidationError('reward must be a finite number', 'reward');
+      set('reward', patch.reward);
+    }
+    if (patch.success !== undefined) {
+      if (typeof patch.success !== 'boolean') throw new CrudValidationError('success must be a boolean', 'success');
+      set('success', patch.success ? 1 : 0);
+    }
+    if (patch.latencyMs !== undefined) set('latency_ms', optionalCount('latencyMs', patch.latencyMs));
+    if (patch.tokensUsed !== undefined) set('tokens_used', optionalCount('tokensUsed', patch.tokensUsed));
+    if (patch.tags !== undefined) set('tags', patch.tags === null ? null : JSON.stringify(assertTags(patch.tags)));
+    if (patch.metadata !== undefined) {
+      let merged: Record<string, unknown> | null;
+      if (patch.metadata === null) merged = null;
+      else if (options.replaceMetadata) merged = assertMetadata(patch.metadata);
+      else merged = mergeMetadata(safeJsonParse(current.metadata, {}), assertMetadata(patch.metadata));
+      set('metadata', merged === null ? null : JSON.stringify(merged));
+    }
+
+    const textOf = (e: { task: string; output: string | null; critique: string | null }) =>
+      this.buildEpisodeText({ task: e.task, output: e.output ?? undefined, critique: e.critique ?? undefined } as Episode);
+    const lexicalChanged = next.task !== current.task || next.input !== current.input
+      || next.output !== current.output || next.critique !== current.critique;
+    const embedText = textOf(next);
+    const reembed = embedText !== textOf(current);
+    // Embed before the transaction: the drivers' transactions are synchronous.
+    const embedding = reembed ? await this.embedder.embedPassage(embedText) : undefined;
+
+    inTransaction(this.db, () => {
+      // Another writer may have changed the text while we were embedding; never store a stale vector.
+      if (reembed) {
+        const now = this.db.prepare<DatabaseRows.Episode>('SELECT * FROM episodes WHERE id = ?').get(episodeId);
+        if (!now) throw new CrudValidationError(`episode ${episodeId} was deleted during the update`, 'id');
+        if (textOf(now) !== textOf(current)) {
+          throw new CrudValidationError(`episode ${episodeId} was modified concurrently; retry the update`, 'id');
+        }
+      }
+      this.db.prepare(`UPDATE episodes SET ${sets.join(', ')} WHERE id = ?`).run(...values, episodeId);
+      if (embedding) this.storeEmbedding(episodeId, embedding);
+    });
+
+    if (embedding && this.vectorBackend) {
+      try {
+        this.vectorBackend.remove(String(episodeId));
+        this.vectorBackend.insert(String(episodeId), embedding);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // eslint-disable-next-line no-console
+        console.warn(`[ReflexionMemory] updateEpisode: vector index refresh failed (${msg}); call rebuildIndex()`);
+      }
+    }
+
+    this.queryCache.invalidateCategory('episodes');
+    this.queryCache.invalidateCategory('task-stats');
+    if (lexicalChanged) {
+      this.lexicalIndex?.update(
+        { id: episodeId, task: current.task, input: current.input, output: current.output, critique: current.critique },
+        { id: episodeId, ...next },
+      );
+    }
+
+    const row = this.db.prepare<DatabaseRows.Episode>('SELECT * FROM episodes WHERE id = ?').get(episodeId)!;
+    return { episode: this.convertDatabaseEpisode(row), reembedded: reembed, changedFields: keys };
+  }
+
   /**
    * Prune low-quality episodes based on TTL and quality threshold
    * Invalidates cache on completion
@@ -977,6 +1192,9 @@ export class ReflexionMemory {
 
     // Invalidate caches after pruning
     if (result.changes > 0) {
+      // Foreign-key cascades are off unless the connection enables them, so drop the orphaned vectors too.
+      this.db.prepare('DELETE FROM episode_embeddings WHERE episode_id NOT IN (SELECT id FROM episodes)').run();
+      this.lexicalIndex?.invalidate();
       this.queryCache.invalidateCategory('episodes');
       this.queryCache.invalidateCategory('task-stats');
     }
@@ -999,6 +1217,7 @@ export class ReflexionMemory {
     const stmt = this.db.prepare(`
       INSERT INTO episode_embeddings (episode_id, embedding)
       VALUES (?, ?)
+      ON CONFLICT(episode_id) DO UPDATE SET embedding = excluded.embedding
     `);
 
     stmt.run(episodeId, this.serializeEmbedding(embedding));
@@ -1009,7 +1228,7 @@ export class ReflexionMemory {
     if (!embedding || !embedding.buffer) {
       return Buffer.alloc(0);
     }
-    return Buffer.from(embedding.buffer);
+    return embeddingBlob(embedding);
   }
 
   private deserializeEmbedding(buffer: Buffer): Float32Array {
@@ -1298,8 +1517,11 @@ export class ReflexionMemory {
    * @returns True if the episode existed in any backend and was removed.
    */
   async deleteEpisode(id: number | string): Promise<boolean> {
-    const numericId = typeof id === 'number' ? id : parseInt(String(id), 10);
+    // Strict: parseInt would turn "12-notes" into 12 and delete the wrong episode.
+    const numericId = typeof id === 'number' ? id
+      : /^\d+$/.test(String(id).trim()) ? Number(String(id).trim()) : NaN;
     const stringId = String(id);
+    if (!this.graphBackend && !(Number.isSafeInteger(numericId) && numericId > 0)) return false;
 
     // Invalidate caches up front — failures below shouldn't leave stale reads.
     this.queryCache.invalidateCategory('episodes');
@@ -1342,9 +1564,11 @@ export class ReflexionMemory {
 
     // 3. Vector backend (HNSW/RuVector); some implementations don't expose
     //    delete — guard with a feature check.
-    if (this.vectorBackend && typeof (this.vectorBackend as any).delete === 'function') {
+    // VectorBackend exposes remove(); older adapters used delete().
+    const vb = this.vectorBackend as (VectorBackend & { delete?: (id: string) => unknown }) | undefined;
+    if (vb && Number.isFinite(numericId) && (typeof vb.remove === 'function' || typeof vb.delete === 'function')) {
       try {
-        const r = await (this.vectorBackend as any).delete(String(numericId));
+        const r = typeof vb.remove === 'function' ? vb.remove(String(numericId)) : await vb.delete!(String(numericId));
         if (r === true) removed = true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -1364,7 +1588,10 @@ export class ReflexionMemory {
         const stmt = this.db.prepare(`DELETE FROM episodes WHERE id = ?`);
         const r = stmt.run(numericId);
         const changes = (r as any)?.changes ?? 0;
-        if (changes > 0) removed = true;
+        if (changes > 0) {
+          removed = true;
+          this.lexicalIndex?.invalidate();
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (!/no such table/i.test(msg)) {

@@ -1,0 +1,84 @@
+{
+  "N": 10000,
+  "OPS": 500,
+  "real": false,
+  "results": [
+    {
+      "op": "episode.get",
+      "ops": 500,
+      "p50_ms": 0.0101,
+      "p99_ms": 0.0724,
+      "mean_ms": 0.0357
+    },
+    {
+      "op": "episode.list(page=50)",
+      "ops": 500,
+      "p50_ms": 0.1145,
+      "p99_ms": 0.1883,
+      "mean_ms": 0.1288
+    },
+    {
+      "op": "episode.update(metadata only)",
+      "ops": 500,
+      "p50_ms": 0.0537,
+      "p99_ms": 0.2675,
+      "mean_ms": 0.0931
+    },
+    {
+      "op": "episode.update(text, re-embed)",
+      "ops": 500,
+      "p50_ms": 0.1106,
+      "p99_ms": 0.2174,
+      "mean_ms": 0.1184
+    },
+    {
+      "op": "episode.delete+insert (pre-3.3 \"update\")",
+      "ops": 500,
+      "p50_ms": 0.0857,
+      "p99_ms": 0.402,
+      "mean_ms": 0.1042
+    },
+    {
+      "op": "episode.delete",
+      "ops": 500,
+      "p50_ms": 0.0079,
+      "p99_ms": 0.0171,
+      "mean_ms": 0.0084
+    },
+    {
+      "op": "hybrid search (no writes)",
+      "ops": 50,
+      "p50_ms": 33.0566,
+      "p99_ms": 61.2858,
+      "mean_ms": 34.4418
+    },
+    {
+      "op": "hybrid search after text update",
+      "ops": 50,
+      "p50_ms": 33.3795,
+      "p99_ms": 52.5787,
+      "mean_ms": 34.9601
+    },
+    {
+      "op": "pattern.update(approach, re-embed)",
+      "ops": 500,
+      "p50_ms": 0.0845,
+      "p99_ms": 0.1651,
+      "mean_ms": 0.0881
+    },
+    {
+      "op": "skill.update(description, re-embed)",
+      "ops": 500,
+      "p50_ms": 0.0901,
+      "p99_ms": 0.1561,
+      "mean_ms": 0.093
+    },
+    {
+      "op": "skill.delete",
+      "ops": 500,
+      "p50_ms": 0.0228,
+      "p99_ms": 0.0808,
+      "mean_ms": 0.0588
+    }
+  ]
+}

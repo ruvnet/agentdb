@@ -18,6 +18,7 @@ import type { GraphDatabaseAdapter } from '../backends/graph/GraphDatabaseAdapte
 import { NodeIdMapper } from '../utils/NodeIdMapper.js';
 import { QueryCache, type QueryCacheConfig } from '../core/QueryCache.js';
 import { TopK, squaredNorm, cosineWithQueryNorm, blobToFloat32 } from '../utils/top-k.js';
+import { assertMetadata, embeddingBlob, inTransaction, mergeMetadata, toPage, toRecordId, CrudValidationError } from './crud-helpers.js';
 
 /** Vector ids this controller writes: "skill:<rowid>" */
 const SKILL_VECTOR_ID = /^skill:(\d+)$/;
@@ -441,8 +442,7 @@ export class SkillLibrary {
       VALUES (?, ?)
       ON CONFLICT(skill_id) DO UPDATE SET embedding = excluded.embedding
     `);
-    const buffer = Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength);
-    stmt.run(skillId, buffer);
+    stmt.run(skillId, embeddingBlob(embedding));
   }
 
   /**
@@ -901,6 +901,222 @@ export class SkillLibrary {
     return Math.min(sampleFactor * successFactor, 0.99);
   }
 
+  // ========================================================================
+  // CRUD: get / list / update / delete (ADR-017). Create is createSkill.
+  // ========================================================================
+
+  /** Fields a skill update may change. uses / successRate / avgReward / avgLatencyMs belong to recordOutcome(). */
+  private static readonly SKILL_PATCH_FIELDS = new Set(['name', 'description', 'signature', 'code', 'metadata']);
+
+  private assertSqlAddressable(op: string): void {
+    if (this.graphBackend && 'storeSkill' in this.graphBackend) {
+      throw new CrudValidationError(`${op} addresses skills by SQL id and is not available with a graph adapter`, 'id');
+    }
+  }
+
+  private skillRow(row: DatabaseRows.Skill): Skill & { createdAt: number; updatedAt?: number } {
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description ?? undefined,
+      signature: safeJsonParse(row.signature, undefined) as Skill['signature'],
+      code: row.code ?? undefined,
+      successRate: row.success_rate,
+      uses: row.uses,
+      avgReward: row.avg_reward,
+      avgLatencyMs: row.avg_latency_ms,
+      createdFromEpisode: row.created_from_episode ?? undefined,
+      metadata: safeJsonParse(row.metadata, undefined),
+      createdAt: row.created_at,
+      updatedAt: (row as DatabaseRows.Skill & { updated_at?: number }).updated_at,
+    };
+  }
+
+  /** Fetch one skill by id; null when it does not exist. */
+  getSkill(skillId: number | string): (Skill & { createdAt: number; updatedAt?: number }) | null {
+    this.assertSqlAddressable('getSkill');
+    const id = toRecordId(skillId, 'skillId');
+    const row = this.db.prepare<DatabaseRows.Skill>('SELECT * FROM skills WHERE id = ?').get(id);
+    return row ? this.skillRow(row) : null;
+  }
+
+  /** Page through skills, newest first. `total` counts every skill. */
+  listSkills(options: { limit?: number; offset?: number; minSuccessRate?: number } = {}): {
+    items: Skill[]; total: number; limit: number; offset: number;
+  } {
+    this.assertSqlAddressable('listSkills');
+    const { limit, offset } = toPage(options.limit, options.offset);
+    const min = options.minSuccessRate;
+    if (min !== undefined && (typeof min !== 'number' || !Number.isFinite(min))) {
+      throw new CrudValidationError('minSuccessRate must be a finite number', 'minSuccessRate');
+    }
+    const where = min !== undefined ? 'WHERE success_rate >= ?' : '';
+    const params = min !== undefined ? [min] : [];
+    const total = this.db.prepare<{ c: number }>(`SELECT COUNT(*) AS c FROM skills ${where}`).get(...params)?.c ?? 0;
+    const rows = this.db
+      .prepare<DatabaseRows.Skill>(`SELECT * FROM skills ${where} ORDER BY id DESC LIMIT ? OFFSET ?`)
+      .all(...params, limit, offset);
+    return { items: rows.map(r => this.skillRow(r)), total, limit, offset };
+  }
+
+  /**
+   * Update a skill in place, keeping its id. Re-embeds only when name, description or signature
+   * changes. A rename onto an existing name is rejected (names are unique). Usage statistics are not
+   * writable here. Metadata merges by default (null removes a key); `{ replaceMetadata: true }` replaces it.
+   * Returns null when the skill does not exist.
+   */
+  async updateSkill(
+    skillId: number | string,
+    patch: Partial<{
+      name: string;
+      description: string | null;
+      signature: { inputs: Record<string, any>; outputs: Record<string, any> };
+      code: string | null;
+      metadata: Record<string, unknown> | null;
+    }>,
+    options: { replaceMetadata?: boolean } = {},
+  ): Promise<{ skill: Skill; reembedded: boolean; changedFields: string[] } | null> {
+    this.assertSqlAddressable('updateSkill');
+    const id = toRecordId(skillId, 'skillId');
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new CrudValidationError('patch must be an object', 'patch');
+    const keys = Object.keys(patch).filter(k => (patch as Record<string, unknown>)[k] !== undefined);
+    for (const k of keys) {
+      if (!SkillLibrary.SKILL_PATCH_FIELDS.has(k)) throw new CrudValidationError(`"${k}" cannot be updated`, k);
+    }
+    const current = this.db.prepare<DatabaseRows.Skill>('SELECT * FROM skills WHERE id = ?').get(id);
+    if (!current) return null;
+    if (keys.length === 0) return { skill: this.skillRow(current), reembedded: false, changedFields: [] };
+
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    const next = { name: current.name, description: current.description, signature: current.signature };
+
+    if (patch.name !== undefined) {
+      if (typeof patch.name !== 'string' || !patch.name.trim()) throw new CrudValidationError('name must be a non-empty string', 'name');
+      if (patch.name !== current.name) {
+        const clash = this.db.prepare<{ id: number }>('SELECT id FROM skills WHERE name = ? AND id != ?').get(patch.name, id);
+        if (clash) throw new CrudValidationError(`a skill named "${patch.name}" already exists`, 'name');
+      }
+      next.name = patch.name;
+      sets.push('name = ?'); values.push(patch.name);
+    }
+    if (patch.description !== undefined) {
+      if (patch.description !== null && typeof patch.description !== 'string') {
+        throw new CrudValidationError('description must be a string or null', 'description');
+      }
+      next.description = patch.description;
+      sets.push('description = ?'); values.push(patch.description);
+    }
+    if (patch.signature !== undefined) {
+      const sig = patch.signature as unknown;
+      if (!sig || typeof sig !== 'object' || Array.isArray(sig)) throw new CrudValidationError('signature must be an object', 'signature');
+      assertMetadata(sig, 'signature');
+      next.signature = JSON.stringify(sig);
+      sets.push('signature = ?'); values.push(next.signature);
+    }
+    if (patch.code !== undefined) {
+      if (patch.code !== null && typeof patch.code !== 'string') throw new CrudValidationError('code must be a string or null', 'code');
+      sets.push('code = ?'); values.push(patch.code);
+    }
+    if (patch.metadata !== undefined) {
+      const merged = patch.metadata === null ? null
+        : options.replaceMetadata ? assertMetadata(patch.metadata)
+        : mergeMetadata(safeJsonParse(current.metadata, {}), assertMetadata(patch.metadata));
+      sets.push('metadata = ?'); values.push(merged === null ? null : JSON.stringify(merged));
+    }
+
+    const reembed = next.name !== current.name || next.description !== current.description || next.signature !== current.signature;
+    const embedding = reembed
+      ? await this.embedder.embedPassage(this.buildSkillText({
+          name: next.name,
+          description: next.description ?? undefined,
+          signature: safeJsonParse(next.signature, undefined) as Skill['signature'],
+          successRate: current.success_rate,
+        }))
+      : undefined;
+
+    inTransaction(this.db, () => {
+      if (reembed) {
+        const now = this.db.prepare<DatabaseRows.Skill>('SELECT * FROM skills WHERE id = ?').get(id);
+        if (!now) throw new CrudValidationError(`skill ${id} was deleted during the update`, 'skillId');
+        if (now.name !== current.name || now.description !== current.description || now.signature !== current.signature) {
+          throw new CrudValidationError(`skill ${id} was modified concurrently; retry the update`, 'skillId');
+        }
+      }
+      try {
+        this.db.prepare(`UPDATE skills SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
+      } catch (err) {
+        // A concurrent insert can still win the name between our check and the UPDATE.
+        if (/UNIQUE/i.test(err instanceof Error ? err.message : String(err))) {
+          throw new CrudValidationError(`a skill named "${next.name}" already exists`, 'name');
+        }
+        throw err;
+      }
+      if (embedding) this.storeSkillEmbeddingLegacy(id, embedding);
+    });
+
+    if (embedding && this.vectorBackend) {
+      try {
+        this.vectorBackend.remove(`skill:${id}`);
+        this.vectorBackend.insert(`skill:${id}`, embedding, {
+          name: next.name, description: next.description ?? undefined,
+          successRate: current.success_rate, avgReward: current.avg_reward,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // eslint-disable-next-line no-console
+        console.warn(`[SkillLibrary] updateSkill: vector index refresh failed for skill ${id}: ${msg}`);
+      }
+    }
+    this.queryCache.invalidateCategory('skills');
+    const row = this.db.prepare<DatabaseRows.Skill>('SELECT * FROM skills WHERE id = ?').get(id)!;
+    return { skill: this.skillRow(row), reembedded: reembed, changedFields: keys };
+  }
+
+  /**
+   * Delete a skill and everything that points at it: its embedding, its links in both directions
+   * and its vector-index entry. Returns false when no skill has that id.
+   */
+  deleteSkill(skillId: number | string): boolean {
+    this.assertSqlAddressable('deleteSkill');
+    const id = toRecordId(skillId, 'skillId');
+    const changes = inTransaction(this.db, () => {
+      this.purgeSkillDependents([id]);
+      return this.db.prepare('DELETE FROM skills WHERE id = ?').run(id).changes;
+    });
+    if (changes > 0) {
+      this.removeSkillVectors([id]);
+      this.queryCache.invalidateCategory('skills');
+    }
+    return changes > 0;
+  }
+
+  /** Foreign-key cascades are off unless the connection enables them, so remove dependents explicitly. */
+  private purgeSkillDependents(ids: number[]): void {
+    // Not every schema carries both tables (the MCP server creates skills without skill_links).
+    const present = new Set(
+      this.db
+        .prepare<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('skill_embeddings', 'skill_links')")
+        .all()
+        .map(r => r.name),
+    );
+    const embeddings = present.has('skill_embeddings') ? this.db.prepare('DELETE FROM skill_embeddings WHERE skill_id = ?') : null;
+    const links = present.has('skill_links')
+      ? this.db.prepare('DELETE FROM skill_links WHERE parent_skill_id = ? OR child_skill_id = ?')
+      : null;
+    for (const id of ids) {
+      embeddings?.run(id);
+      links?.run(id, id);
+    }
+  }
+
+  private removeSkillVectors(ids: number[]): void {
+    if (!this.vectorBackend) return;
+    for (const id of ids) {
+      try { this.vectorBackend.remove(`skill:${id}`); } catch { /* index may not hold it */ }
+    }
+  }
+
   /**
    * Prune underperforming skills
    * Invalidates cache on completion
@@ -908,14 +1124,15 @@ export class SkillLibrary {
   pruneSkills(config: { minUses?: number; minSuccessRate?: number; maxAgeDays?: number }): number {
     const { minUses = 3, minSuccessRate = 0.4, maxAgeDays = 60 } = config;
 
-    const stmt = this.db.prepare(`
-      DELETE FROM skills
-      WHERE uses < ?
-        AND success_rate < ?
-        AND created_at < strftime('%s', 'now') - ?
-    `);
-
-    const result = stmt.run(minUses, minSuccessRate, maxAgeDays * 86400);
+    const cutoff = [minUses, minSuccessRate, maxAgeDays * 86400] as const;
+    const condition = `uses < ? AND success_rate < ? AND created_at < strftime('%s', 'now') - ?`;
+    // Collect ids first so the embeddings, links and vector entries of pruned skills go too.
+    const ids = this.db.prepare<{ id: number }>(`SELECT id FROM skills WHERE ${condition}`).all(...cutoff).map(r => r.id);
+    const result = ids.length === 0 ? { changes: 0 } : inTransaction(this.db, () => {
+      this.purgeSkillDependents(ids);
+      return this.db.prepare(`DELETE FROM skills WHERE ${condition}`).run(...cutoff);
+    });
+    if (result.changes > 0) this.removeSkillVectors(ids);
 
     // Invalidate cache after pruning
     if (result.changes > 0) {

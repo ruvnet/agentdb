@@ -80,6 +80,30 @@ export class Bm25Index {
     return doc;
   }
 
+  /**
+   * Replace document `doc` in place. `oldTokens` must be the tokens it was indexed with: their postings
+   * are removed, the new ones added, and the length statistics adjusted. O(postings of the touched terms).
+   */
+  replace(doc: number, oldTokens: readonly string[], newTokens: readonly string[]): void {
+    if (doc < 0 || doc >= this.lengths.length) throw new RangeError(`no document ${doc}`);
+    for (const term of new Set(oldTokens)) {
+      const list = this.postings.get(term);
+      if (!list) continue;
+      const kept = list.filter(p => p.doc !== doc);
+      if (kept.length) this.postings.set(term, kept);
+      else this.postings.delete(term);
+    }
+    this.total += newTokens.length - this.lengths[doc];
+    this.lengths[doc] = newTokens.length;
+    const tf = new Map<string, number>();
+    for (const t of newTokens) tf.set(t, (tf.get(t) ?? 0) + 1);
+    for (const [term, n] of tf) {
+      let list = this.postings.get(term);
+      if (!list) this.postings.set(term, (list = []));
+      list.push({ doc, tf: n });
+    }
+  }
+
   /** BM25 score of every document for the query tokens (0 where no term matches). */
   score(query: readonly string[]): Float64Array {
     const n = this.lengths.length;

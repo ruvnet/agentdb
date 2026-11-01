@@ -40,7 +40,9 @@ import {
   validateEnum,
   ValidationError,
   handleSecurityError,
+  sanitizeText,
 } from '../security/input-validation.js';
+import { assertMetadata, assertTags, inTransaction, toRecordId, CrudValidationError } from '../controllers/crud-helpers.js';
 import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -463,6 +465,141 @@ const tools = [
   // ==========================================================================
   // FRONTIER MEMORY FEATURES (EXISTING)
   // ==========================================================================
+  {
+    name: 'agentdb_get',
+    description: 'Get one stored vector record (episode) by id. Returns null when it does not exist. The embedding is omitted unless include_embedding is true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: 'Record id returned by agentdb_insert' },
+        include_embedding: { type: 'boolean', description: 'Also return the stored embedding vector', default: false },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'agentdb_list',
+    description: 'Page through stored vector records (episodes), newest first. Returns items plus the total count.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Only records from this session' },
+        limit: { type: 'number', description: 'Page size (1-500)', default: 50 },
+        offset: { type: 'number', description: 'Records to skip', default: 0 },
+        order: { type: 'string', enum: ['newest', 'oldest'], default: 'newest' },
+      },
+    },
+  },
+  {
+    name: 'agentdb_update',
+    description: 'Update a stored vector record in place, keeping its id. Changing text re-embeds it and refreshes the keyword index; tag or metadata changes do not re-embed. Metadata is merged (null removes a key) unless replace_metadata is true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: 'Record id' },
+        text: { type: 'string', description: 'New text content (re-embedded)' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Replacement tag list' },
+        metadata: { type: 'object', description: 'Metadata patch (merged by default)' },
+        replace_metadata: { type: 'boolean', description: 'Replace metadata instead of merging', default: false },
+        reward: { type: 'number', description: 'New reward value' },
+        success: { type: 'boolean', description: 'New success flag' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'agentdb_pattern_get',
+    description: 'Get one reasoning pattern by id.',
+    inputSchema: {
+      type: 'object',
+      properties: { pattern_id: { type: 'number', description: 'Pattern id' } },
+      required: ['pattern_id'],
+    },
+  },
+  {
+    name: 'agentdb_pattern_list',
+    description: 'Page through reasoning patterns, newest first, optionally filtered by task type.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        task_type: { type: 'string', description: 'Only patterns of this task type' },
+        limit: { type: 'number', default: 50 },
+        offset: { type: 'number', default: 0 },
+      },
+    },
+  },
+  {
+    name: 'agentdb_pattern_update',
+    description: 'Update a reasoning pattern in place. Changing taskType or approach re-embeds it. Usage statistics are not writable here (use agentdb_pattern_feedback).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pattern_id: { type: 'number', description: 'Pattern id' },
+        taskType: { type: 'string' },
+        approach: { type: 'string' },
+        tags: { type: 'array', items: { type: 'string' } },
+        metadata: { type: 'object', description: 'Metadata patch (merged by default)' },
+        replace_metadata: { type: 'boolean', default: false },
+      },
+      required: ['pattern_id'],
+    },
+  },
+  {
+    name: 'agentdb_pattern_delete',
+    description: 'Delete a reasoning pattern, its embedding and its vector-index entry.',
+    inputSchema: {
+      type: 'object',
+      properties: { pattern_id: { type: 'number', description: 'Pattern id' } },
+      required: ['pattern_id'],
+    },
+  },
+  {
+    name: 'skill_get',
+    description: 'Get one skill by id.',
+    inputSchema: {
+      type: 'object',
+      properties: { skill_id: { type: 'number', description: 'Skill id' } },
+      required: ['skill_id'],
+    },
+  },
+  {
+    name: 'skill_list',
+    description: 'Page through skills, newest first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        min_success_rate: { type: 'number', description: 'Only skills at or above this success rate' },
+        limit: { type: 'number', default: 50 },
+        offset: { type: 'number', default: 0 },
+      },
+    },
+  },
+  {
+    name: 'skill_update',
+    description: 'Update a skill in place. Changing name, description or signature re-embeds it; renaming onto an existing name is rejected. Usage statistics are not writable here (use agentdb_skill_feedback).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        skill_id: { type: 'number', description: 'Skill id' },
+        name: { type: 'string' },
+        description: { type: 'string' },
+        code: { type: 'string' },
+        signature: { type: 'object', description: '{ inputs: {...}, outputs: {...} }' },
+        metadata: { type: 'object', description: 'Metadata patch (merged by default)' },
+        replace_metadata: { type: 'boolean', default: false },
+      },
+      required: ['skill_id'],
+    },
+  },
+  {
+    name: 'skill_delete',
+    description: 'Delete a skill with its embedding, links and vector-index entry.',
+    inputSchema: {
+      type: 'object',
+      properties: { skill_id: { type: 'number', description: 'Skill id' } },
+      required: ['skill_id'],
+    },
+  },
   {
     name: 'reflexion_store',
     description: 'Store an episode with self-critique for reflexion-based learning',
@@ -1036,6 +1173,164 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return { tools: filterMcpTools(tools, toolPolicy) };
 });
 
+/** Bulk-delete episodes together with their embeddings (FK cascades are off by default). */
+function deleteEpisodesWhere(condition: string, value: string | number): number {
+  const changes = inTransaction(db, () => {
+    db.prepare(`DELETE FROM episode_embeddings WHERE episode_id IN (SELECT id FROM episodes WHERE ${condition})`).run(value);
+    return db.prepare(`DELETE FROM episodes WHERE ${condition}`).run(value).changes as number;
+  });
+  if (changes > 0) {
+    reflexion.clearCache();
+    caches.stats.clear();
+  }
+  return changes;
+}
+
+/** Reject arguments a tool does not define, so a typo can never silently become a no-op update. */
+function rejectUnknownArgs(args: Record<string, unknown>, allowed: readonly string[], tool: string): void {
+  for (const key of Object.keys(args)) {
+    if (!allowed.includes(key)) throw new CrudValidationError(`${tool} does not accept "${key}"`, key);
+  }
+}
+
+function optionalString(value: unknown, field: string, maxLength = 100_000): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') throw new CrudValidationError(`${field} must be a string`, field);
+  if (value.length > maxLength) throw new CrudValidationError(`${field} exceeds ${maxLength} characters`, field);
+  return value;
+}
+
+/** Dispatch for the ADR-017 CRUD tools. Returns a JSON-serialisable result. */
+async function handleCrudTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+  switch (name) {
+    case 'agentdb_get': {
+      rejectUnknownArgs(args, ['id', 'include_embedding'], name);
+      const episode = reflexion.getEpisode(toRecordId(args.id), { includeEmbedding: args.include_embedding === true });
+      if (!episode) return null;
+      const { embedding, ...rest } = episode;
+      return embedding ? { ...rest, embedding: Array.from(embedding) } : rest;
+    }
+    case 'agentdb_list': {
+      rejectUnknownArgs(args, ['session_id', 'limit', 'offset', 'order'], name);
+      const order = args.order === undefined ? 'newest' : validateEnum(args.order, 'order', ['newest', 'oldest'] as const);
+      return reflexion.listEpisodes({
+        sessionId: args.session_id === undefined ? undefined : validateSessionId(args.session_id as string),
+        limit: args.limit as number | undefined,
+        offset: args.offset as number | undefined,
+        order,
+      });
+    }
+    case 'agentdb_update': {
+      rejectUnknownArgs(args, ['id', 'text', 'tags', 'metadata', 'replace_metadata', 'reward', 'success'], name);
+      // agentdb_insert stores the text as both task and input, so an update keeps them in step.
+      const text = args.text === undefined ? undefined : requireText(args.text, 'text');
+      const result = await reflexion.updateEpisode(
+        toRecordId(args.id),
+        {
+          task: text,
+          input: text,
+          tags: args.tags === undefined ? undefined : assertTags(args.tags),
+          metadata: args.metadata === undefined ? undefined : assertMetadata(args.metadata),
+          reward: args.reward === undefined ? undefined : validateNumericRange(args.reward, 'reward', -1e6, 1e6),
+          success: args.success === undefined ? undefined : validateBoolean(args.success, 'success'),
+        },
+        { replaceMetadata: args.replace_metadata === true },
+      );
+      if (result) caches.stats.clear();
+      return result ? { updated: true, ...result } : { updated: false, reason: 'not found' };
+    }
+    case 'agentdb_pattern_get': {
+      rejectUnknownArgs(args, ['pattern_id'], name);
+      const pattern = reasoningBank.getPattern(toRecordId(args.pattern_id, 'pattern_id'));
+      if (!pattern) return null;
+      const { embedding: _omit, ...rest } = pattern;
+      return rest;
+    }
+    case 'agentdb_pattern_list': {
+      rejectUnknownArgs(args, ['task_type', 'limit', 'offset'], name);
+      return reasoningBank.listPatterns({
+        taskType: optionalString(args.task_type, 'task_type', 1000),
+        limit: args.limit as number | undefined,
+        offset: args.offset as number | undefined,
+      });
+    }
+    case 'agentdb_pattern_update': {
+      rejectUnknownArgs(args, ['pattern_id', 'taskType', 'approach', 'tags', 'metadata', 'replace_metadata'], name);
+      const result = await reasoningBank.updatePattern(
+        toRecordId(args.pattern_id, 'pattern_id'),
+        {
+          taskType: args.taskType === undefined ? undefined : requireText(args.taskType, 'taskType'),
+          approach: args.approach === undefined ? undefined : requireText(args.approach, 'approach'),
+          tags: args.tags === undefined ? undefined : assertTags(args.tags),
+          metadata: args.metadata === undefined ? undefined : assertMetadata(args.metadata),
+        },
+        { replaceMetadata: args.replace_metadata === true },
+      );
+      if (result) {
+        caches.patterns.clear();
+        caches.stats.clear();
+      }
+      if (!result) return { updated: false, reason: 'not found' };
+      const { embedding: _omit, ...pattern } = result.pattern;
+      return { updated: true, ...result, pattern };
+    }
+    case 'agentdb_pattern_delete': {
+      rejectUnknownArgs(args, ['pattern_id'], name);
+      const deleted = reasoningBank.deletePattern(toRecordId(args.pattern_id, 'pattern_id'));
+      if (deleted) {
+        caches.patterns.clear();
+        caches.stats.clear();
+      }
+      return { deleted };
+    }
+    case 'skill_get': {
+      rejectUnknownArgs(args, ['skill_id'], name);
+      return skills.getSkill(toRecordId(args.skill_id, 'skill_id'));
+    }
+    case 'skill_list': {
+      rejectUnknownArgs(args, ['min_success_rate', 'limit', 'offset'], name);
+      return skills.listSkills({
+        minSuccessRate: args.min_success_rate === undefined ? undefined : validateNumericRange(args.min_success_rate, 'min_success_rate', 0, 1),
+        limit: args.limit as number | undefined,
+        offset: args.offset as number | undefined,
+      });
+    }
+    case 'skill_update': {
+      rejectUnknownArgs(args, ['skill_id', 'name', 'description', 'code', 'signature', 'metadata', 'replace_metadata'], name);
+      const result = await skills.updateSkill(
+        toRecordId(args.skill_id, 'skill_id'),
+        {
+          name: args.name === undefined ? undefined : requireText(args.name, 'name'),
+          description: args.description === undefined ? undefined : requireText(args.description, 'description'),
+          code: optionalString(args.code, 'code'),
+          signature: args.signature === undefined ? undefined
+            : assertMetadata(args.signature, 'signature') as { inputs: Record<string, any>; outputs: Record<string, any> },
+          metadata: args.metadata === undefined ? undefined : assertMetadata(args.metadata),
+        },
+        { replaceMetadata: args.replace_metadata === true },
+      );
+      if (result) caches.stats.clear();
+      return result ? { updated: true, ...result } : { updated: false, reason: 'not found' };
+    }
+    case 'skill_delete': {
+      rejectUnknownArgs(args, ['skill_id'], name);
+      const deleted = skills.deleteSkill(toRecordId(args.skill_id, 'skill_id'));
+      if (deleted) caches.stats.clear();
+      return { deleted };
+    }
+    default:
+      throw new CrudValidationError(`unknown CRUD tool ${name}`, 'name');
+  }
+}
+
+/** Non-empty text up to `maxLength`, null bytes stripped. Deliberately no content heuristics: stored text may be code. */
+function requireText(value: unknown, field: string, maxLength = 100_000): string {
+  const text = sanitizeText(value as string, maxLength, field);
+  if (!text.trim()) throw new CrudValidationError(`${field} cannot be empty`, field);
+  return text;
+}
+
+
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
@@ -1056,7 +1351,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Initialize schema
         initializeSchema(db);
 
-        const stats = db.prepare('SELECT COUNT(*) as count FROM sqlite_master WHERE type="table"').get() as any;
+        const stats = db.prepare("SELECT COUNT(*) as count FROM sqlite_master WHERE type = 'table'").get() as any;
 
         return {
           content: [
@@ -1073,10 +1368,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'agentdb_insert': {
-        const text = args?.text as string;
-        const sessionId = (args?.session_id as string) || 'default';
-        const tags = (args?.tags as string[]) || [];
-        const metadata = (args?.metadata as Record<string, any>) || {};
+        const text = requireText(args?.text, 'text');
+        const sessionId = args?.session_id === undefined ? 'default' : validateSessionId(args.session_id as string);
+        const tags = args?.tags === undefined ? [] : assertTags(args.tags);
+        const metadata = args?.metadata === undefined ? {} : assertMetadata(args.metadata);
 
         const episodeId = await reflexion.storeEpisode({
           sessionId,
@@ -1110,19 +1405,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const items = validateArrayLength<any>(args?.items ?? [], 'items', 0, MAX_INSERT_BATCH_ITEMS);
         const batchSize = (args?.batch_size as number) || 100;
 
-        const episodes = items.map((item: any) => ({
-          sessionId: item.session_id || 'default',
-          task: item.text,
+        const episodes = items.map((item: any, i: number) => {
+          if (!item || typeof item !== 'object') throw new ValidationError(`items[${i}] must be an object`, 'INVALID_TYPE', 'items');
+          const text = requireText(item.text, `items[${i}].text`);
+          return {
+          sessionId: item.session_id === undefined ? 'default' : validateSessionId(item.session_id),
+          task: text,
           reward: 1.0,
           success: true,
-          input: item.text,
+          input: text,
           output: '',
           critique: '',
           latencyMs: 0,
           tokensUsed: 0,
-          tags: item.tags || [],
-          metadata: item.metadata || {},
-        }));
+          tags: item.tags === undefined ? [] : assertTags(item.tags, `items[${i}].tags`),
+          metadata: item.metadata === undefined ? {} : assertMetadata(item.metadata, `items[${i}].metadata`),
+          };
+        });
 
         const batchOpsConfig = new BatchOperations(db, embeddingService, {
           batchSize,
@@ -1202,10 +1501,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             // Validate ID
             const validatedId = validateId(id, 'id');
 
-            // Delete single vector using parameterized query
-            const stmt = db.prepare('DELETE FROM episodes WHERE id = ?');
-            const result = stmt.run(validatedId);
-            deleted = result.changes;
+            // Through the controller so the embedding, vector index and caches go with the row
+            deleted = (await reflexion.deleteEpisode(validatedId)) ? 1 : 0;
           } else if (filters) {
             // Bulk delete with validated filters
             if (filters.session_id) {
@@ -1213,17 +1510,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               const validatedSessionId = validateSessionId(filters.session_id);
 
               // Use parameterized query
-              const stmt = db.prepare('DELETE FROM episodes WHERE session_id = ?');
-              const result = stmt.run(validatedSessionId);
-              deleted = result.changes;
+              deleted = deleteEpisodesWhere('session_id = ?', validatedSessionId);
             } else if (filters.before_timestamp) {
               // Validate timestamp
               const validatedTimestamp = validateTimestamp(filters.before_timestamp, 'before_timestamp');
 
               // Use parameterized query
-              const stmt = db.prepare('DELETE FROM episodes WHERE ts < ?');
-              const result = stmt.run(validatedTimestamp);
-              deleted = result.changes;
+              deleted = deleteEpisodesWhere('ts < ?', validatedTimestamp);
             } else {
               throw new ValidationError('Invalid or missing filter criteria', 'INVALID_FILTER');
             }
@@ -1252,6 +1545,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             ],
             isError: true,
           };
+        }
+      }
+
+      // ======================================================================
+      // CRUD: get / list / update / delete (ADR-017)
+      // ======================================================================
+      case 'agentdb_get':
+      case 'agentdb_list':
+      case 'agentdb_update':
+      case 'agentdb_pattern_get':
+      case 'agentdb_pattern_list':
+      case 'agentdb_pattern_update':
+      case 'agentdb_pattern_delete':
+      case 'skill_get':
+      case 'skill_list':
+      case 'skill_update':
+      case 'skill_delete': {
+        try {
+          const result = await handleCrudTool(name, (args ?? {}) as Record<string, unknown>);
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        } catch (error: any) {
+          const message = error instanceof CrudValidationError ? error.message : handleSecurityError(error);
+          return { content: [{ type: 'text', text: `❌ ${name} failed: ${message}` }], isError: true };
         }
       }
 
@@ -2485,29 +2801,36 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'agentdb_delete_batch': {
-        const ids = (args?.ids as number[]) || [];
+        const ids = validateArrayLength<unknown>(args?.ids ?? [], 'ids', 0, MAX_INSERT_BATCH_ITEMS);
         const requestedTable = (args?.table as string) || 'episodes';
-        const allowedTables = new Set(['episodes', 'reasoning_patterns']);
-        if (!allowedTables.has(requestedTable)) {
-          throw new Error(`Invalid table: ${requestedTable}`);
+        // Each table with the embedding table that must be cleaned alongside it (FK cascades are off by default)
+        const embeddingTables: Record<string, [string, string]> = {
+          episodes: ['episode_embeddings', 'episode_id'],
+          reasoning_patterns: ['pattern_embeddings', 'pattern_id'],
+        };
+        if (!Object.prototype.hasOwnProperty.call(embeddingTables, requestedTable)) {
+          throw new ValidationError(`Invalid table: ${requestedTable}`, 'INVALID_TABLE', 'table');
         }
         if (ids.length === 0) {
           return { content: [{ type: 'text', text: '⚠️  No IDs supplied — nothing to delete.' }] };
         }
-        // Validate each id is a positive integer (defense in depth)
-        const safeIds = ids.map((raw) => {
-          const n = Number(raw);
-          if (!Number.isInteger(n) || n <= 0) throw new Error(`Invalid id: ${raw}`);
-          return n;
-        });
+        const safeIds = ids.map((raw, i) => toRecordId(raw, `ids[${i}]`));
         const placeholders = safeIds.map(() => '?').join(',');
-        // requestedTable is whitelist-checked above; parameterising values via ?.
-        const stmt = db.prepare(`DELETE FROM ${requestedTable} WHERE id IN (${placeholders})`);
-        const result = stmt.run(...safeIds);
+        const [embTable, embColumn] = embeddingTables[requestedTable];
+        // Table names come from the fixed map above; values are bound parameters.
+        const changes = inTransaction(db, () => {
+          db.prepare(`DELETE FROM ${embTable} WHERE ${embColumn} IN (${placeholders})`).run(...safeIds);
+          return db.prepare(`DELETE FROM ${requestedTable} WHERE id IN (${placeholders})`).run(...safeIds).changes as number;
+        });
+        if (changes > 0) {
+          if (requestedTable === 'episodes') reflexion.clearCache();
+          else { reasoningBank.clearCache(); caches.patterns.clear(); }
+          caches.stats.clear();
+        }
         return {
           content: [{
             type: 'text',
-            text: `🗑️  Batch delete from \`${requestedTable}\`: ${result.changes}/${safeIds.length} rows removed (atomic).`,
+            text: `🗑️  Batch delete from \`${requestedTable}\`: ${changes}/${safeIds.length} rows removed (atomic).`,
           }],
         };
       }
@@ -2533,11 +2856,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new Error(`Unknown tool: ${name}`);
     }
   } catch (error: any) {
+    if (!(error instanceof ValidationError)) console.error(`[agentdb-mcp] ${name} failed:`, error);
     return {
       content: [
         {
           type: 'text',
-          text: `❌ Error: ${error.message}\n${error.stack || ''}`,
+          // The stack trace stays in the server log; clients only see the message.
+          text: `❌ Error: ${error?.message ?? String(error)}`,
         },
       ],
       isError: true,

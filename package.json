@@ -1,6 +1,6 @@
 {
   "name": "agentdb",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "description": "Self-learning vector memory for AI agents — single-file .rvf cognitive container with HNSW search, episodic Reflexion memory, causal graph + Cypher, 9 RL algorithms, Thompson Sampling bandit, 41 MCP tools, hybrid (BM25 + dense) retrieval, GNN attention. 150x faster than SQLite. Up to +36% search quality from feedback. Runs in Node, browsers (WASM), edge, offline. Backs the agentic-flow / ruflo / Claude Code memory layer.",
   "type": "module",
   "main": "dist/src/index.js",
@@ -65,7 +65,7 @@
     "test": "vitest",
     "test:unit": "vitest --run",
     "test:browser": "vitest browser-bundle-unit.test.js --run",
-    "test:ci": "npm run test:unit && npm run test:browser && npm run build && npm run verify:bundle && npm run test:mcp-stdio",
+    "test:ci": "npm run test:unit && npm run test:browser && npm run build && npm run verify:bundle && npm run test:mcp-stdio && npm run test:mcp-crud",
     "test:mcp-stdio": "node tests/mcp-stdio-purity.mjs",
     "verify:bundle": "node scripts/verify-bundle.js",
     "cli": "node dist/src/cli/agentdb-cli.js",
@@ -81,7 +81,9 @@
     "benchmark:adr072:fast": "vitest run tests/benchmarks/validate-adr072.test.ts",
     "benchmark:all": "npm run benchmark:attention && npm run benchmark:backends && npm run benchmark:profile && npm run benchmark:ruvector",
     "build:model": "node scripts/build-model-rvf.mjs",
-    "prebuild": "node scripts/inline-schemas.mjs"
+    "prebuild": "node scripts/inline-schemas.mjs",
+    "test:mcp-crud": "node tests/mcp-crud-e2e.mjs",
+    "benchmark:crud": "tsx benchmarks/crud-benchmark.mts"
   },
   "keywords": [
     "agentdb",
