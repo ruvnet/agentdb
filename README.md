@@ -165,6 +165,19 @@ Each decision logs reward over time. Bad arms decay fast. Good arms stick.
 
 Run them yourself: `npm run bench` from this repo.
 
+### Long-term memory retrieval (LongMemEval)
+
+Episode search fuses BM25 keyword ranking with vector ranking by default (`hybrid: false` turns it off), and `rerank: true` adds a local cross-encoder over the top candidates. Session retrieval on [LongMemEval](https://github.com/xiaowu0162/LongMemEval), default MiniLM embedder, local models only, official protocol (470 questions):
+
+| LongMemEval_M (≈500 sessions per question) | recall_all@5 | NDCG@5 | recall_all@10 |
+|---|---|---|---|
+| dense only | 0.630 | 0.692 | 0.751 |
+| **hybrid** (default) | 0.719 | 0.750 | 0.806 |
+| **hybrid + `rerank: true`** | **0.789** | **0.828** | **0.881** |
+| LongMemEval paper, best (Contriever + LLM fact keys) | 0.762 | 0.632 | 0.862 |
+
+The harness (`benchmarks/longmemeval/`) runs the same ranking functions over turn chunks; protocol, S-split numbers, other rerankers and limits are in [ADR-016](docs/adrs/ADR-016-hybrid-retrieval-longmemeval.md).
+
 ---
 
 ## 🔌 MCP Integration

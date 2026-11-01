@@ -5,6 +5,38 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-10-31
+
+Hybrid episode retrieval and a LongMemEval benchmark (docs/adrs/ADR-016). No API removals. The default order of `retrieveRelevant()` / `agentdb_search` results changes; `hybrid: false` restores the 3.1.0 order.
+
+### Added
+
+- **Hybrid retrieval, on by default.** `ReflexionMemory.retrieveRelevant()` (and `agentdb_search`) fuse BM25 keyword ranking over episode text with the vector ranking by reciprocal-rank fusion. Keyword-only hits are fetched, filtered like vector hits, and carry their real cosine `similarity`. `hybrid: false` (MCP: `"hybrid": false`) gives pure vector order. Not applied with a graph backend.
+- **Opt-in cross-encoder reranking.** `rerank: true` (MCP: `"rerank": true`) rereads the top 60 vector and top 60 keyword candidates with a local cross-encoder (`Xenova/ms-marco-MiniLM-L-6-v2`, q8; `AGENTDB_RERANKER_MODEL` to change). About 200 ms per call on CPU and a 23 MB download on first use; any failure keeps the hybrid order.
+- **`benchmarks/longmemeval/`**: a LongMemEval session-retrieval harness over the same ranking functions (streaming loader for the 2.7 GB M split, cached embeddings, cached cross-encoder scores). Results for S and M are in `benchmarks/longmemeval/results/`.
+
+### Measured (LongMemEval session retrieval, MiniLM embedder, official protocol: 470 questions, abstention skipped)
+
+| | S recall_all@5 | S NDCG@5 | M recall_all@5 | M NDCG@5 | M recall_all@10 |
+|---|---|---|---|---|---|
+| dense only (same chunks) | 0.883 | 0.904 | 0.630 | 0.692 | 0.751 |
+| hybrid (new default) | 0.900 | 0.924 | 0.719 | 0.750 | 0.806 |
+| hybrid + rerank (MiniLM-L-6) | 0.934 | 0.943 | 0.789 | 0.828 | 0.881 |
+
+On M, the best published retrieval in the LongMemEval paper (Table 9: Contriever with LLM-extracted fact keys) is recall 0.762, NDCG 0.632 at 5 and recall 0.862 at 10. The harness runs the ranking functions over turn chunks, not the episode store; see ADR-016 for the protocol and its limits.
+
+### Changed
+
+- `ruvector` optional dependency `^0.2.40` → `^0.3.5`.
+
+### Security
+
+- `agentdb_search` validates `query` (string, non-empty, at most 10,000 characters); it was passed through unchecked. Tokenising caps text at 32 KB and 4,096 tokens per document, 256 per query; the tokeniser regex is linear. `AGENTDB_HYBRID_MAX_EPISODES` is clamped to [1, 1,000,000].
+
+### Performance
+
+- The BM25 index covers the newest 10,000 episodes (`AGENTDB_HYBRID_MAX_EPISODES`). The first search in a process builds it (about 200 ms at 10k, 1 s at 50k); later writes are appended, so a write-then-search costs about 8 ms at 50k. Deletes trigger a rebuild.
+
 ## [3.1.0] - 2026-10-31
 
 Retrieval quality and observability (docs/adrs/ADR-015). No breaking changes.

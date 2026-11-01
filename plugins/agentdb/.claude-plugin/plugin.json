@@ -1,7 +1,7 @@
 {
   "name": "agentdb",
   "description": "AgentDB's own standalone MCP server (npx agentdb mcp start) for Claude Code: vector memory, reflexion episodes, skills, causal edges and learning tools, plus a mod that keeps secrets out of memory and refuses destructive admin tools unless enabled. Not the ruflo-agentdb plugin, which reaches AgentDB through ruflo's MCP server; the two can be installed side by side.",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "author": {
     "name": "ruvnet",
     "url": "https://github.com/ruvnet"
