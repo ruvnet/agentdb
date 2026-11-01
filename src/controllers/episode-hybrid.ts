@@ -3,16 +3,25 @@
  *
  * Dense search alone misses episodes whose wording matches the query but whose embedding does not (names, error
  * codes, numbers). This keeps a BM25 index over the most recent episodes, rebuilt only when the episodes table
- * changes, and fuses its ranking with the dense ranking by reciprocal-rank fusion. With the default MiniLM embedder
- * the same fusion lifts LongMemEval session recall_all@5 from 0.883 to 0.900 (S, ~50 sessions per question) and
- * from 0.630 to 0.719 (M, ~500 sessions per question). See ADR-016.
+ * changes, and fuses its ranking with the dense ranking by reciprocal-rank fusion. On LongMemEval session retrieval
+ * (benchmarks/longmemeval, which runs these ranking functions over turn chunks, not the episode store), the same
+ * fusion lifts recall_all@5 over dense-only ranking of the same chunks from 0.883 to 0.900 (S) and from 0.630 to
+ * 0.719 (M), with the default MiniLM embedder. See ADR-016.
  */
 import type { IDatabaseConnection } from '../types/database.types.js';
 import { Bm25Index, tokenize } from '../search/conversation-retrieval.js';
 import { crossEncoderScores } from '../search/cross-encoder.js';
 
-/** Episodes indexed for BM25, newest first. Older episodes are still found by dense search. */
-export const HYBRID_MAX_INDEXED = Number(process.env.AGENTDB_HYBRID_MAX_EPISODES) || 50_000;
+/**
+ * Episodes indexed for BM25, newest first; older episodes are still found by dense search. The first search in a
+ * process builds the index (about 200 ms at 10k episodes, 1 s at 50k); later writes are appended incrementally.
+ */
+export const HYBRID_MAX_INDEXED = clampInt(process.env.AGENTDB_HYBRID_MAX_EPISODES, 10_000, 1, 1_000_000);
+
+function clampInt(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n >= min ? Math.min(n, max) : fallback;
+}
 /** The candidate pool each side contributes before fusion. */
 export const HYBRID_MAX_POOL = 500;
 /** Weight of the BM25 ranking against the dense ranking. Equal weights won on LongMemEval_M; see ADR-016. */
@@ -27,9 +36,13 @@ interface EpisodeTextRow {
   critique: string | null;
 }
 
-/** A BM25 index over episode text, rebuilt lazily when the table's row count or max id changes. */
+/**
+ * A BM25 index over episode text. New episodes are appended incrementally (the common write-then-read pattern);
+ * the index is rebuilt only when rows were deleted or replaced, or it has grown past 1.25x its cap.
+ */
 export class EpisodeLexicalIndex {
-  private signature = '';
+  private count = -1;
+  private maxId = 0;
   private ids: number[] = [];
   private index: Bm25Index | null = null;
 
@@ -38,16 +51,36 @@ export class EpisodeLexicalIndex {
     private readonly maxDocs = HYBRID_MAX_INDEXED,
   ) {}
 
+  private static textOf(r: EpisodeTextRow): string[] {
+    return tokenize([r.task, r.input, r.output, r.critique].filter(Boolean).join('\n'));
+  }
+
   private refresh(): void {
     const sig = this.db.prepare<{ c: number; m: number | null }>('SELECT COUNT(*) AS c, MAX(id) AS m FROM episodes').get();
-    const signature = `${sig?.c ?? 0}:${sig?.m ?? 0}`;
-    if (signature === this.signature && this.index) return;
+    const count = sig?.c ?? 0;
+    const maxId = sig?.m ?? 0;
+    if (this.index && count === this.count && maxId === this.maxId) return;
+    if (this.index && count > this.count && maxId > this.maxId && this.ids.length < this.maxDocs * 1.25) {
+      const added = this.db
+        .prepare<EpisodeTextRow>('SELECT id, task, input, output, critique FROM episodes WHERE id > ? ORDER BY id ASC')
+        .all(this.maxId);
+      if (this.count + added.length === count) {
+        for (const r of added) {
+          this.index.add(EpisodeLexicalIndex.textOf(r));
+          this.ids.push(r.id);
+        }
+        this.count = count;
+        this.maxId = maxId;
+        return;
+      }
+    }
     const rows = this.db
       .prepare<EpisodeTextRow>('SELECT id, task, input, output, critique FROM episodes ORDER BY id DESC LIMIT ?')
       .all(this.maxDocs);
+    this.index = new Bm25Index(rows.map(r => EpisodeLexicalIndex.textOf(r)));
     this.ids = rows.map(r => r.id);
-    this.index = new Bm25Index(rows.map(r => tokenize([r.task, r.input, r.output, r.critique].filter(Boolean).join('\n'))));
-    this.signature = signature;
+    this.count = count;
+    this.maxId = maxId;
   }
 
   /** Episode ids with a BM25 match, best first, at most `limit`. */

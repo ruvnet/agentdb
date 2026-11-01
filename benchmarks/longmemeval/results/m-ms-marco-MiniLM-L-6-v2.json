@@ -5,7 +5,7 @@
   "seconds": 132.731,
   "configs": [
     {
-      "name": "dense (agentdb 3.1.0 exact search, turn chunks, max)",
+      "name": "dense only (same chunks, MiniLM, max per session)",
       "metrics": {
         "recall_any@5": 0.866,
         "recall_all@5": 0.6298,

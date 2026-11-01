@@ -66,7 +66,7 @@ const withSessionBm25 = (inner: (c: Ctx) => Float64Array, w: number) => (c: Ctx)
 
 const DEPTH = Number(args.depth);
 export const CONFIGS: Config[] = [
-  { name: 'dense (agentdb 3.1.0 exact search, turn chunks, max)', group: { aggregation: 'max' }, score: hybrid({ lexicalWeight: 0 }) },
+  { name: 'dense only (same chunks, MiniLM, max per session)', group: { aggregation: 'max' }, score: hybrid({ lexicalWeight: 0 }) },
   { name: 'bm25 only', group: { aggregation: 'max' }, score: c => c.p.lexical },
   { name: 'hybrid rrf 1:1 max', group: { aggregation: 'max' }, score: hybrid({ lexicalWeight: 1 }) },
   { name: 'hybrid rrf 1:0.5 max', group: { aggregation: 'max' }, score: hybrid({ lexicalWeight: 0.5 }) },

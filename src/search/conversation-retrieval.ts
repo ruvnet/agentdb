@@ -47,47 +47,50 @@ function lightStem(tok: string): string {
   return tok;
 }
 
-/** Okapi BM25 over a fixed document set. */
+/** Okapi BM25 over a document set that can grow by appending (`add`). */
 export class Bm25Index {
   private readonly postings = new Map<string, { doc: number; tf: number }[]>();
-  private readonly lengths: Float64Array;
-  private readonly avgLen: number;
+  private readonly lengths: number[] = [];
+  private total = 0;
   private readonly k1: number;
   private readonly b: number;
 
-  constructor(docs: readonly string[][], k1 = 1.2, b = 0.75) {
+  constructor(docs: readonly string[][] = [], k1 = 1.2, b = 0.75) {
     this.k1 = k1;
     this.b = b;
-    this.lengths = new Float64Array(docs.length);
-    let total = 0;
-    docs.forEach((tokens, doc) => {
-      this.lengths[doc] = tokens.length;
-      total += tokens.length;
-      const tf = new Map<string, number>();
-      for (const t of tokens) tf.set(t, (tf.get(t) ?? 0) + 1);
-      for (const [term, n] of tf) {
-        let list = this.postings.get(term);
-        if (!list) this.postings.set(term, (list = []));
-        list.push({ doc, tf: n });
-      }
-    });
-    this.avgLen = docs.length ? total / docs.length || 1 : 1;
+    for (const tokens of docs) this.add(tokens);
   }
 
   get size(): number {
     return this.lengths.length;
   }
 
+  /** Appends a document; its index is the previous `size`. */
+  add(tokens: readonly string[]): number {
+    const doc = this.lengths.length;
+    this.lengths.push(tokens.length);
+    this.total += tokens.length;
+    const tf = new Map<string, number>();
+    for (const t of tokens) tf.set(t, (tf.get(t) ?? 0) + 1);
+    for (const [term, n] of tf) {
+      let list = this.postings.get(term);
+      if (!list) this.postings.set(term, (list = []));
+      list.push({ doc, tf: n });
+    }
+    return doc;
+  }
+
   /** BM25 score of every document for the query tokens (0 where no term matches). */
   score(query: readonly string[]): Float64Array {
-    const scores = new Float64Array(this.lengths.length);
     const n = this.lengths.length;
+    const scores = new Float64Array(n);
+    const avgLen = n ? this.total / n || 1 : 1;
     for (const term of new Set(query.slice(0, RETRIEVAL_LIMITS.maxQueryTokens))) {
       const list = this.postings.get(term);
       if (!list) continue;
       const idf = Math.log(1 + (n - list.length + 0.5) / (list.length + 0.5));
       for (const { doc, tf } of list) {
-        const norm = tf + this.k1 * (1 - this.b + (this.b * this.lengths[doc]) / this.avgLen);
+        const norm = tf + this.k1 * (1 - this.b + (this.b * this.lengths[doc]) / avgLen);
         scores[doc] += idf * ((tf * (this.k1 + 1)) / norm);
       }
     }

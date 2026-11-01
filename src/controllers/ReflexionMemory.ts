@@ -354,15 +354,19 @@ export class ReflexionMemory {
     if (lexical.length === 0 && !query.rerank) return dense.slice(0, k);
 
     const byId = new Map(dense.filter((e) => e.id !== undefined).map((e) => [e.id as number, e]));
-    const denseIds = [...byId.keys()];
-    const score = fuseEpisodeScores(denseIds, lexical);
-    const candidates = query.rerank
-      ? [...new Set([...denseIds.slice(0, RERANK_DEPTH), ...lexical.slice(0, RERANK_DEPTH).map((l) => l.id)])]
-      : [];
-    const need = new Set([...orderByScore(score, denseIds).slice(0, k * 2), ...candidates]);
-    const missing = [...need].filter((id) => !byId.has(id));
+    // Load the keyword hits the fusion will see, so every fused episode has a true cosine similarity; the dense
+    // side is then the cosine order over (dense pool + keyword hits), the same ranking the benchmark fuses.
+    const lexHead = lexical.slice(0, Math.max(dense.length, query.rerank ? RERANK_DEPTH : 0));
+    const missing = lexHead.map((l) => l.id).filter((id) => !byId.has(id));
     if (missing.length > 0) this.loadKeywordHits(missing, byId, query, queryEmbedding);
-    for (const id of [...score.keys()]) if (!byId.has(id) && need.has(id)) score.delete(id);
+    const lexUsed = lexHead.filter((l) => byId.has(l.id)); // keyword hits that failed the filters drop out
+    const denseIds = [...byId.values()]
+      .sort((a, z) => (z.similarity ?? 0) - (a.similarity ?? 0) || (z.id as number) - (a.id as number))
+      .map((e) => e.id as number);
+    const score = fuseEpisodeScores(denseIds, lexUsed);
+    const candidates = query.rerank
+      ? [...new Set([...denseIds.slice(0, RERANK_DEPTH), ...lexUsed.slice(0, RERANK_DEPTH).map((l) => l.id)])]
+      : [];
 
     if (query.rerank) {
       try {

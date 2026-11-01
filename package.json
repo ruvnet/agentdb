@@ -1,6 +1,6 @@
 {
   "name": "agentdb",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Self-learning vector memory for AI agents — single-file .rvf cognitive container with HNSW search, episodic Reflexion memory, causal graph + Cypher, 9 RL algorithms, Thompson Sampling bandit, 41 MCP tools, hybrid (BM25 + dense) retrieval, GNN attention. 150x faster than SQLite. Up to +36% search quality from feedback. Runs in Node, browsers (WASM), edge, offline. Backs the agentic-flow / ruflo / Claude Code memory layer.",
   "type": "module",
   "main": "dist/src/index.js",
@@ -210,7 +210,7 @@
     "commander": "^12.1.0",
     "hnswlib-node": "^3.0.0",
     "inquirer": "^9.3.8",
-    "ruvector": "^0.2.40",
+    "ruvector": "^0.3.5",
     "ruvector-attention-wasm": "^0.1.32",
     "ruvector-graph-transformer-wasm": "^2.0.4"
   },

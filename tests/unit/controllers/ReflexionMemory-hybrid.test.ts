@@ -78,6 +78,16 @@ describe('ReflexionMemory hybrid retrieval', () => {
     expect(r[0].sessionId).toBe('late');
   });
 
+  it('appends new episodes incrementally and rebuilds after a delete', () => {
+    const idx = new EpisodeLexicalIndex(db);
+    expect(idx.search('zephyrine', 5).length).toBe(1);
+    db.prepare("INSERT INTO episodes (session_id, task, reward, success) VALUES ('x', 'zephyrine again', 0.5, 1)").run();
+    expect(idx.search('zephyrine', 5).length).toBe(2);
+    db.prepare("DELETE FROM episodes WHERE session_id = 'needle'").run();
+    const after = idx.search('zephyrine', 5);
+    expect(after.length).toBe(1);
+  });
+
   it('caps the indexed episodes', () => {
     const idx = new EpisodeLexicalIndex(db, 10);
     expect(idx.search('routine maintenance', 100).length).toBeLessThanOrEqual(10);
