@@ -419,13 +419,15 @@ const tools = [
   },
   {
     name: 'agentdb_search',
-    description: 'Semantic k-NN vector search using cosine similarity. Returns the most relevant results ranked by similarity score.',
+    description: 'Hybrid episode search: dense k-NN (cosine) fused with BM25 keyword ranking by reciprocal-rank fusion. Set hybrid=false for pure vector order.',
     inputSchema: {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'Search query text' },
         k: { type: 'number', description: 'Number of results to return (max 100)', default: 10, minimum: 1, maximum: 100 },
         min_similarity: { type: 'number', description: 'Minimum similarity threshold (0-1)', default: 0.0 },
+        hybrid: { type: 'boolean', description: 'Fuse BM25 keyword ranking with the vector ranking (ADR-016)', default: true },
+        rerank: { type: 'boolean', description: 'Rerank the top candidates with a local cross-encoder (ADR-016; ~200 ms on CPU, 23 MB model on first use)', default: false },
         filters: {
           type: 'object',
           properties: {
@@ -1144,7 +1146,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'agentdb_search': {
-        const queryText = args?.query as string;
+        const queryText = validateTaskString(args?.query, 'query');
         const k = Math.floor(validateNumericRange(args?.k ?? 10, 'k', 1, MAX_SEARCH_K));
         const minSimilarity = (args?.min_similarity as number) || 0.0;
         const filters = args?.filters as any;
@@ -1152,6 +1154,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const query: any = {
           task: queryText,
           k,
+          hybrid: args?.hybrid !== false,
+          rerank: args?.rerank === true,
         };
 
         if (filters) {

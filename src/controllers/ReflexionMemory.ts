@@ -20,6 +20,14 @@ import type { GraphDatabaseAdapter } from '../backends/graph/GraphDatabaseAdapte
 import { NodeIdMapper } from '../utils/NodeIdMapper.js';
 import { QueryCache, type QueryCacheConfig } from '../core/QueryCache.js';
 import { TopK, squaredNorm, cosineWithQueryNorm } from '../utils/top-k.js';
+import {
+  applyCrossEncoder,
+  EpisodeLexicalIndex,
+  fuseEpisodeScores,
+  HYBRID_MAX_POOL,
+  orderByScore,
+  RERANK_DEPTH,
+} from './episode-hybrid.js';
 
 function finiteNumber(value: unknown, name: string): number {
   const n = Number(value);
@@ -75,6 +83,16 @@ export interface ReflexionQuery {
   onlyFailures?: boolean;
   onlySuccesses?: boolean;
   timeWindowDays?: number;
+  /**
+   * Fuse BM25 keyword ranking with the dense ranking (ADR-016). Default true; false restores pure vector order.
+   * Not applied with a graph backend, whose episode ids are not SQL row ids.
+   */
+  hybrid?: boolean;
+  /**
+   * Rerank the top candidates with a local cross-encoder (ADR-016). Default false: it costs about 200 ms per call
+   * on CPU and downloads a 23 MB model on first use. Needs hybrid; falls back to the hybrid order on any error.
+   */
+  rerank?: boolean;
 }
 
 export class ReflexionMemory {
@@ -84,6 +102,7 @@ export class ReflexionMemory {
   private learningBackend?: LearningBackend;
   private graphBackend?: GraphBackend;
   private queryCache: QueryCache;
+  private lexicalIndex?: EpisodeLexicalIndex;
 
   constructor(
     db: IDatabaseConnection,
@@ -272,11 +291,13 @@ export class ReflexionMemory {
       onlySuccesses = false,
       timeWindowDays,
     } = query;
+    const hybrid = query.hybrid !== false && !this.graphBackend;
+    const rerank = hybrid && query.rerank === true;
 
     // Check cache first
     const cacheKey = this.queryCache.generateKey(
       'retrieveRelevant',
-      [task, currentState, k, minReward, onlyFailures, onlySuccesses, timeWindowDays],
+      [task, currentState, k, minReward, onlyFailures, onlySuccesses, timeWindowDays, hybrid, rerank],
       'episodes'
     );
 
@@ -295,15 +316,96 @@ export class ReflexionMemory {
       episodes = await this.retrieveFromGraphAdapter(queryEmbedding, query);
     } else if (this.graphBackend && 'execute' in this.graphBackend) {
       episodes = await this.retrieveFromGenericGraph(query);
-    } else if (this.vectorBackend) {
-      episodes = await this.retrieveFromVectorBackend(queryEmbedding, query);
     } else {
-      episodes = await this.retrieveFromSQLFallback(queryEmbedding, query);
+      // Hybrid retrieval widens the dense pool, then fuses it with the BM25 ranking.
+      const pooled = hybrid ? { ...query, k: Math.min(Math.max(k * 4, 50), HYBRID_MAX_POOL) } : query;
+      episodes = this.vectorBackend
+        ? await this.retrieveFromVectorBackend(queryEmbedding, pooled)
+        : await this.retrieveFromSQLFallback(queryEmbedding, pooled);
+      if (hybrid) {
+        episodes = await this.hybridRank([task, currentState].filter(Boolean).join('\n'), episodes, { ...query, rerank }, queryEmbedding);
+      }
     }
 
     // Cache and return results
     this.queryCache.set(cacheKey, episodes);
     return episodes;
+  }
+
+  /**
+   * Re-rank a dense candidate list by fusing it with BM25 over episode text, then optionally with a cross-encoder
+   * (ADR-016). Episodes found only by keyword are fetched, filtered like dense hits, and given their cosine
+   * similarity. Falls back to the dense order if the keyword index cannot be built, and to the hybrid order if
+   * the cross-encoder cannot run.
+   */
+  private async hybridRank(
+    text: string,
+    dense: EpisodeWithEmbedding[],
+    query: ReflexionQuery,
+    queryEmbedding: Float32Array
+  ): Promise<EpisodeWithEmbedding[]> {
+    const k = query.k ?? 5;
+    let lexical: { id: number; score: number }[] = [];
+    try {
+      lexical = (this.lexicalIndex ??= new EpisodeLexicalIndex(this.db)).search(text, HYBRID_MAX_POOL);
+    } catch {
+      if (!query.rerank) return dense.slice(0, k);
+    }
+    if (lexical.length === 0 && !query.rerank) return dense.slice(0, k);
+
+    const byId = new Map(dense.filter((e) => e.id !== undefined).map((e) => [e.id as number, e]));
+    const denseIds = [...byId.keys()];
+    const score = fuseEpisodeScores(denseIds, lexical);
+    const candidates = query.rerank
+      ? [...new Set([...denseIds.slice(0, RERANK_DEPTH), ...lexical.slice(0, RERANK_DEPTH).map((l) => l.id)])]
+      : [];
+    const need = new Set([...orderByScore(score, denseIds).slice(0, k * 2), ...candidates]);
+    const missing = [...need].filter((id) => !byId.has(id));
+    if (missing.length > 0) this.loadKeywordHits(missing, byId, query, queryEmbedding);
+    for (const id of [...score.keys()]) if (!byId.has(id) && need.has(id)) score.delete(id);
+
+    if (query.rerank) {
+      try {
+        await applyCrossEncoder(text, score, candidates, (id) => {
+          const ep = byId.get(id);
+          return ep ? [ep.task, ep.input, ep.output, ep.critique].filter(Boolean).join('\n') : undefined;
+        });
+      } catch {
+        // Model unavailable (offline, unsupported platform): keep the hybrid order.
+      }
+    }
+    const out: EpisodeWithEmbedding[] = [];
+    for (const id of orderByScore(score, denseIds)) {
+      const ep = byId.get(id);
+      if (ep) out.push(ep);
+      if (out.length >= k) break;
+    }
+    return out;
+  }
+
+  /** Fetches keyword-only hits, applies the query's filters, and records their cosine similarity. */
+  private loadKeywordHits(
+    ids: number[],
+    byId: Map<number, EpisodeWithEmbedding>,
+    query: ReflexionQuery,
+    queryEmbedding: Float32Array
+  ): void {
+    const marks = ids.map(() => '?').join(',');
+    const embeddings = new Map(
+      this.db
+        .prepare<{ episode_id: number; embedding: Buffer }>(
+          `SELECT episode_id, embedding FROM episode_embeddings WHERE episode_id IN (${marks})`
+        )
+        .all(...ids)
+        .map((r) => [r.episode_id, this.deserializeEmbedding(r.embedding)])
+    );
+    const queryNorm = Math.sqrt(squaredNorm(queryEmbedding));
+    for (const row of this.fetchEpisodesByIds(ids)) {
+      if (!this.passesEpisodeFilters(row, query)) continue;
+      const emb = embeddings.get(row.id);
+      const similarity = emb && emb.length === queryEmbedding.length ? cosineWithQueryNorm(queryEmbedding, queryNorm, emb) : 0;
+      byId.set(row.id, this.convertDatabaseEpisode(row, similarity));
+    }
   }
 
   /**
