@@ -5,6 +5,31 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-11-01
+
+Full CRUD for episodes, reasoning patterns and skills (docs/adrs/ADR-017). No API removals.
+
+### Added
+
+- **Get, list and update for every record type, delete for patterns and skills.** Library: `getEpisode`, `listEpisodes`, `updateEpisode`; `listPatterns`, `updatePattern`; `getSkill`, `listSkills`, `updateSkill`, `deleteSkill`. MCP: `agentdb_get`, `agentdb_list`, `agentdb_update`, `agentdb_pattern_get`, `agentdb_pattern_list`, `agentdb_pattern_update`, `agentdb_pattern_delete`, `skill_get`, `skill_list`, `skill_update`, `skill_delete`.
+- **Updates keep the id and every index consistent.** The SQL row, embedding, vector-index entry, caches and BM25 keyword index move together in one transaction. The embedder runs only when embedded text changes, so a metadata, tag or reward edit is ~30x cheaper than the old delete + insert (0.038 ms vs 1.13 ms p50 with MiniLM). Usage statistics stay with the feedback tools and cannot be overwritten by an edit.
+- `Bm25Index.replace()`: in-place keyword-index edits, so the first hybrid search after an update no longer pays a full rebuild (33.4 ms vs 46.8 ms p50 at 10,000 episodes).
+- `npm run test:mcp-crud` (stdio end-to-end on both SQL drivers), `npm run benchmark:crud`, and a `Library` CI workflow.
+
+### Fixed
+
+- `deleteEpisode` never removed the episode from the vector index (called `delete()`, the interface has `remove()`).
+- `deleteEpisode("12-notes")` deleted episode 12 (`parseInt`); ids are now strict integers everywhere.
+- `deletePattern` left the pattern in the vector index.
+- `pruneEpisodes`, `pruneSkills`, `agentdb_delete` with filters and `agentdb_delete_batch` left orphaned embeddings (and skill links).
+- `agentdb_init` failed on better-sqlite3 (double-quoted SQL string literal).
+
+### Security
+
+- `agentdb_insert` / `agentdb_insert_batch` validate text, session id, tags and metadata (size cap, no `__proto__`/`constructor`/`prototype` keys).
+- Error responses no longer include stack traces.
+- New delete tools are admin-only; get/list are read-only; updates are in the `learning` profile. The plugin mod screens updates for secrets and refuses the new deletes unless `allow_destructive` is on.
+
 ## [3.2.0] - 2026-10-31
 
 Hybrid episode retrieval and a LongMemEval benchmark (docs/adrs/ADR-016). No API removals. The default order of `retrieveRelevant()` / `agentdb_search` results changes; `hybrid: false` restores the 3.1.0 order.

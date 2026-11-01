@@ -1,0 +1,41 @@
+name: Library
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/library.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/library.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  crud-and-mcp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Typecheck and build
+        run: npm run build:ts && npm run copy:schemas
+      - name: CRUD and hybrid retrieval unit tests
+        run: npx vitest run tests/unit/controllers/crud-adr017.test.ts tests/unit/controllers/ReflexionMemory-hybrid.test.ts tests/unit/controllers/episode-rerank.test.ts tests/unit/search
+      - name: MCP stdio purity
+        run: npm run test:mcp-stdio
+      - name: MCP CRUD end-to-end (sql.js and better-sqlite3)
+        run: npm run test:mcp-crud

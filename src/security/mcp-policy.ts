@@ -15,6 +15,13 @@ const READONLY_TOOLS = [
   'recall_with_certificate',
   'reflexion_retrieve',
   'skill_search',
+  // CRUD reads (ADR-017)
+  'agentdb_get',
+  'agentdb_list',
+  'agentdb_pattern_get',
+  'agentdb_pattern_list',
+  'skill_get',
+  'skill_list',
 ] as const;
 
 const LEARNING_TOOLS = [
@@ -41,6 +48,10 @@ const LEARNING_TOOLS = [
   'reflexion_store_batch',
   'skill_create',
   'skill_create_batch',
+  // In-place updates keep ids; deletes stay admin-only (ADR-017)
+  'agentdb_update',
+  'agentdb_pattern_update',
+  'skill_update',
 ] as const;
 
 /** Tools that reset or delete data: only the admin profile (or an explicit allow) grants them. */
@@ -48,6 +59,8 @@ export const ADMIN_ONLY_TOOLS: readonly string[] = [
   'agentdb_init',
   'agentdb_delete',
   'agentdb_delete_batch',
+  'agentdb_pattern_delete',
+  'skill_delete',
   'agentdb_clear_cache',
 ];
 

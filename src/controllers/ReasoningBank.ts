@@ -24,6 +24,16 @@ import { EmbeddingService } from './EmbeddingService.js';
 import type { VectorBackend, SearchResult } from '../backends/VectorBackend.js';
 import { searchVectors } from '../backends/VectorBackend.js';
 import { sqlExactSource } from '../backends/ExactSearch.js';
+import {
+  assertMetadata,
+  assertTags,
+  embeddingBlob,
+  inTransaction,
+  mergeMetadata,
+  toPage,
+  toRecordId,
+  CrudValidationError,
+} from './crud-helpers.js';
 import { TopK, squaredNorm, blobToFloat32 } from '../utils/top-k.js';
 
 /** Parse JSON from DB row values without throwing on malformed data. */
@@ -289,7 +299,7 @@ export class ReasoningBank {
    * Store pattern embedding
    */
   private storePatternEmbedding(patternId: number, embedding: Float32Array): void {
-    const blob = Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength);
+    const blob = embeddingBlob(embedding);
 
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO pattern_embeddings (pattern_id, embedding)
@@ -747,6 +757,131 @@ export class ReasoningBank {
     };
   }
 
+  /** Fields a pattern update may change. uses / successRate / avgReward belong to updatePatternStats(). */
+  private static readonly PATTERN_PATCH_FIELDS = new Set(['taskType', 'approach', 'tags', 'metadata']);
+
+  /**
+   * Update a pattern's content in place, keeping its id (ADR-017).
+   * Re-embeds only when taskType or approach changes; the SQL row, pattern_embeddings and the vector
+   * backend move together. Usage statistics are not writable here — use updatePatternStats()/recordOutcome().
+   * Metadata is merged by default (null removes a key); `{ replaceMetadata: true }` replaces it.
+   * Returns null when the pattern does not exist.
+   */
+  async updatePattern(
+    patternId: number | string,
+    patch: Partial<{ taskType: string; approach: string; tags: string[] | null; metadata: Record<string, unknown> | null }>,
+    options: { replaceMetadata?: boolean } = {},
+  ): Promise<{ pattern: ReasoningPattern; reembedded: boolean; changedFields: string[] } | null> {
+    const id = toRecordId(patternId, 'patternId');
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new CrudValidationError('patch must be an object', 'patch');
+    const keys = Object.keys(patch).filter(k => (patch as Record<string, unknown>)[k] !== undefined);
+    for (const k of keys) {
+      if (!ReasoningBank.PATTERN_PATCH_FIELDS.has(k)) throw new CrudValidationError(`"${k}" cannot be updated`, k);
+    }
+    const current = this.db
+      .prepare<{ task_type: string; approach: string; metadata: string | null }>(
+        'SELECT task_type, approach, metadata FROM reasoning_patterns WHERE id = ?',
+      )
+      .get(id);
+    if (!current) return null;
+    if (keys.length === 0) return { pattern: this.getPattern(id)!, reembedded: false, changedFields: [] };
+
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    let taskType = current.task_type;
+    let approach = current.approach;
+    for (const field of ['taskType', 'approach'] as const) {
+      const v = patch[field];
+      if (v === undefined) continue;
+      if (typeof v !== 'string' || !v.trim()) throw new CrudValidationError(`${field} must be a non-empty string`, field);
+      if (field === 'taskType') taskType = v; else approach = v;
+      sets.push(`${field === 'taskType' ? 'task_type' : 'approach'} = ?`);
+      values.push(v);
+    }
+    if (patch.tags !== undefined) {
+      sets.push('tags = ?');
+      values.push(patch.tags === null ? null : JSON.stringify(assertTags(patch.tags)));
+    }
+    if (patch.metadata !== undefined) {
+      const merged = patch.metadata === null ? null
+        : options.replaceMetadata ? assertMetadata(patch.metadata)
+        : mergeMetadata(safeJsonParse(current.metadata, {}), assertMetadata(patch.metadata));
+      sets.push('metadata = ?');
+      values.push(merged === null ? null : JSON.stringify(merged));
+    }
+
+    const reembed = taskType !== current.task_type || approach !== current.approach;
+    const embedding = reembed ? await this.embedder.embedPassage(`${taskType}: ${approach}`) : undefined;
+
+    inTransaction(this.db, () => {
+      if (reembed) {
+        const now = this.db
+          .prepare<{ task_type: string; approach: string }>('SELECT task_type, approach FROM reasoning_patterns WHERE id = ?')
+          .get(id);
+        if (!now) throw new CrudValidationError(`pattern ${id} was deleted during the update`, 'patternId');
+        if (now.task_type !== current.task_type || now.approach !== current.approach) {
+          throw new CrudValidationError(`pattern ${id} was modified concurrently; retry the update`, 'patternId');
+        }
+      }
+      this.db.prepare(`UPDATE reasoning_patterns SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
+      if (embedding) this.storePatternEmbedding(id, embedding);
+    });
+
+    if (embedding && this.vectorBackend) {
+      this.removePatternVector(id);
+      const vectorId = `pattern_${this.nextVectorId++}`;
+      this.idMapping.set(id, vectorId);
+      const row = this.db.prepare<{ success_rate: number }>('SELECT success_rate FROM reasoning_patterns WHERE id = ?').get(id);
+      this.vectorBackend.insert(vectorId, embedding, { patternId: id, taskType, successRate: row?.success_rate ?? 0 });
+    }
+    this.cache.clear();
+    return { pattern: this.getPattern(id)!, reembedded: reembed, changedFields: keys };
+  }
+
+  /** Drop a pattern's entry from the vector backend so it can no longer occupy a top-k slot. */
+  private removePatternVector(patternId: number): void {
+    const vectorId = this.idMapping.get(patternId);
+    if (!vectorId || !this.vectorBackend) return;
+    try {
+      this.vectorBackend.remove(vectorId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // eslint-disable-next-line no-console
+      console.warn(`[ReasoningBank] vector remove failed for pattern ${patternId}: ${msg}`);
+    }
+    this.idMapping.delete(patternId);
+  }
+
+  /**
+   * List patterns, newest first, optionally filtered by task type. `total` counts every match.
+   */
+  listPatterns(options: { taskType?: string; limit?: number; offset?: number } = {}): {
+    items: ReasoningPattern[]; total: number; limit: number; offset: number;
+  } {
+    const { limit, offset } = toPage(options.limit, options.offset);
+    const where = options.taskType !== undefined ? 'WHERE task_type = ?' : '';
+    const params = options.taskType !== undefined ? [String(options.taskType)] : [];
+    const total = this.db.prepare<{ c: number }>(`SELECT COUNT(*) AS c FROM reasoning_patterns ${where}`).get(...params)?.c ?? 0;
+    const rows = this.db
+      .prepare<any>(
+        `SELECT id, ts, task_type, approach, success_rate, uses, avg_reward, tags, metadata
+         FROM reasoning_patterns ${where} ORDER BY id DESC LIMIT ? OFFSET ?`,
+      )
+      .all(...params, limit, offset);
+    const items = rows.map((row: any) => ({
+      id: row.id,
+      taskType: row.task_type,
+      approach: row.approach,
+      successRate: row.success_rate,
+      uses: row.uses,
+      avgReward: row.avg_reward,
+      tags: safeJsonParse(row.tags, []),
+      metadata: safeJsonParse(row.metadata, {}),
+      createdAt: row.ts,
+    }));
+    return { items, total, limit, offset };
+  }
+
   /**
    * Delete pattern by ID
    */
@@ -755,6 +890,7 @@ export class ReasoningBank {
     this.db.prepare('DELETE FROM pattern_embeddings WHERE pattern_id = ?').run(patternId);
     const stmt = this.db.prepare('DELETE FROM reasoning_patterns WHERE id = ?');
     const result = stmt.run(patternId);
+    this.removePatternVector(patternId);
 
     // Invalidate cache
     this.cache.clear();

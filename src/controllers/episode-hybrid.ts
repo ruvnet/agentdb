@@ -83,6 +83,29 @@ export class EpisodeLexicalIndex {
     this.maxId = maxId;
   }
 
+  /**
+   * Apply an in-place edit of one episode without a rebuild. `before` must be the row as it was indexed.
+   * A no-op when the index is not built yet (the next search builds it from current rows) or the episode
+   * is outside the indexed window.
+   */
+  update(before: EpisodeTextRow, after: EpisodeTextRow): void {
+    if (!this.index) return;
+    const doc = this.ids.indexOf(before.id);
+    if (doc < 0) return;
+    this.index.replace(doc, EpisodeLexicalIndex.textOf(before), EpisodeLexicalIndex.textOf(after));
+  }
+
+  /**
+   * Force a full rebuild on the next search. Needed after an in-place edit: an UPDATE changes
+   * neither COUNT(*) nor MAX(id), so refresh() alone would keep serving the old text.
+   */
+  invalidate(): void {
+    this.index = null;
+    this.ids = [];
+    this.count = -1;
+    this.maxId = 0;
+  }
+
   /** Episode ids with a BM25 match, best first, at most `limit`. */
   search(query: string, limit: number): { id: number; score: number }[] {
     this.refresh();
