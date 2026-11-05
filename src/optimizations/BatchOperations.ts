@@ -24,6 +24,7 @@ import {
   ValidationError,
   validateSqlIdentifier,
 } from '../security/input-validation.js';
+import { screenStoredText } from '../security/injection-guard.js';
 
 export interface BatchConfig {
   batchSize: number;
@@ -65,6 +66,9 @@ export class BatchOperations {
    * Bulk insert episodes with embeddings
    */
   async insertEpisodes(episodes: Episode[]): Promise<number> {
+    for (const e of episodes) {
+      await screenStoredText('episode', { task: e.task, input: e.input, output: e.output, critique: e.critique });
+    }
     const totalBatches = Math.ceil(episodes.length / this.config.batchSize);
     let completed = 0;
 
@@ -138,6 +142,9 @@ export class BatchOperations {
       metadata?: Record<string, any>;
     }>
   ): Promise<number[]> {
+    for (const k of skills) {
+      await screenStoredText('skill', { name: k.name, description: k.description, code: k.code });
+    }
     const skillIds: number[] = [];
     let completed = 0;
 
@@ -208,6 +215,9 @@ export class BatchOperations {
       metadata?: Record<string, any>;
     }>
   ): Promise<number[]> {
+    for (const p of patterns) {
+      await screenStoredText('pattern', { taskType: p.taskType, approach: p.approach, context: p.context, outcome: p.outcome });
+    }
     const patternIds: number[] = [];
     let completed = 0;
 

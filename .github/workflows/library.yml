@@ -33,8 +33,8 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Typecheck and build
         run: npm run build:ts && npm run copy:schemas
-      - name: CRUD and hybrid retrieval unit tests
-        run: npx vitest run tests/unit/controllers/crud-adr017.test.ts tests/unit/controllers/ReflexionMemory-hybrid.test.ts tests/unit/controllers/episode-rerank.test.ts tests/unit/search
+      - name: CRUD, hybrid retrieval and ecosystem integration unit tests
+        run: npx vitest run tests/unit/controllers/crud-adr017.test.ts tests/unit/controllers/ReflexionMemory-hybrid.test.ts tests/unit/controllers/episode-rerank.test.ts tests/unit/search tests/unit/integrations tests/unit/controllers/MincutService.test.ts
       - name: MCP stdio purity
         run: npm run test:mcp-stdio
       - name: MCP CRUD end-to-end (sql.js and better-sqlite3)

@@ -13,6 +13,7 @@ import { ReflexionMemory } from '../../../src/controllers/ReflexionMemory.js';
 import { ReasoningBank } from '../../../src/controllers/ReasoningBank.js';
 import { SkillLibrary } from '../../../src/controllers/SkillLibrary.js';
 import { EmbeddingService } from '../../../src/controllers/EmbeddingService.js';
+import { BatchOperations } from '../../../src/optimizations/BatchOperations.js';
 import {
   getInjectionGuardMode,
   resetInjectionGuard,
@@ -108,6 +109,16 @@ describe('aidefence injection guard', () => {
 
     const count = (db.prepare('SELECT COUNT(*) AS c FROM episodes').get() as { c: number }).c;
     expect(count).toBe(1);
+  });
+
+  it('block: covers the batch insert paths used by the *_batch MCP tools', async () => {
+    setInjectionGuard('block');
+    const db = openDb();
+    const batch = new BatchOperations(db as any, await embedder());
+    await expect(batch.insertEpisodes([episode('clean'), episode('t', POISON)] as any)).rejects.toMatchObject({ code: 'INJECTION_DETECTED' });
+    await expect(batch.insertSkills([{ name: 'x', description: POISON }])).rejects.toMatchObject({ code: 'INJECTION_DETECTED' });
+    await expect(batch.insertPatterns([{ taskType: 'x', approach: POISON, successRate: 1 }])).rejects.toMatchObject({ code: 'INJECTION_DETECTED' });
+    expect((db.prepare('SELECT COUNT(*) AS c FROM episodes').get() as { c: number }).c).toBe(0);
   });
 
   it('minSeverity raises the bar', async () => {
