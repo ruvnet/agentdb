@@ -32,8 +32,8 @@ Check which path ran: `mincut.getBackend()` returns `'wasm'` or `'fallback'`; `p
 
 ## Know the costs
 
-- Min cut construction grows about quadratically: ~0.15 s at 1,000 nodes, ~0.35 s at 2,000, ~1.7 s at 4,000, ~6.5 s at 8,000. Graphs above `wasmMaxNodes` (default 2000) use the fallback. Raise it only for one-off analysis: `new MincutService({ algorithm: 'stoer-wagner', wasmMaxNodes: 8000 })`.
-- A global min cut is often one low-degree node against the rest. That is the correct answer, not a balanced split. For balanced chunks, cut recursively or use PPR neighbourhoods.
+- Min cut construction grows about quadratically: ~0.15 s at 1,000 nodes, ~0.35 s at 2,000, ~1.7 s at 4,000, ~6.5 s at 8,000. It also grows with edges: ~2.2 s at 2,000 nodes / 51k edges, ~15 s for a 1,000-node complete graph (500k edges). Graphs above `wasmMaxNodes` (default 2000) or `wasmMaxEdges` (default 20,000) use the fallback. Raise them only for one-off analysis: `new MincutService({ algorithm: 'stoer-wagner', wasmMaxNodes: 8000, wasmMaxEdges: 100000 })`.
+- A global min cut is often one low-degree node against the rest. That is the correct answer, not a balanced split. `partition()` with `maxPartitionSize` set splits any larger side into equal chunks (`algorithm` gains `+bounded`), which is what `partitionedAttention` uses. `stoerWagnerMincut()` never splits.
 - Results are cached by graph content, so a repeated query on the same graph is free.
 - Native PPR runs 20 power iterations and keeps the mass of a node with no edges on that node. The fallback drops it, so scores differ on graphs with dead-end nodes.
 - `AttentionService.sparseAttention()` and `partitionedAttention()` call these services, so they pick up the native paths too.

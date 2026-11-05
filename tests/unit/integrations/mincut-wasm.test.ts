@@ -140,6 +140,23 @@ describe('@ruvector/mincut-wasm integration', () => {
     expect((await service.stoerWagnerMincut(randomConnected(50, 60, 3))).algorithm).toBe('stoer-wagner-wasm');
   });
 
+  it('keeps the JavaScript path above wasmMaxEdges', async () => {
+    const service = new MincutService({ algorithm: 'stoer-wagner', wasmMaxEdges: 40 });
+    await service.initialize();
+    expect((await service.stoerWagnerMincut(randomConnected(30, 60, 4))).algorithm).toBe('stoer-wagner-fallback');
+    expect((await service.stoerWagnerMincut(randomConnected(20, 5, 4))).algorithm).toBe('stoer-wagner-wasm');
+  });
+
+  it('partition() splits parts larger than maxPartitionSize', async () => {
+    const service = new MincutService({ algorithm: 'stoer-wagner', maxPartitionSize: 4 });
+    await service.initialize();
+    const edges = randomConnected(12, 12, 5);
+    const result = await service.partition(edges);
+    expect(result.algorithm).toBe('stoer-wagner-wasm+bounded');
+    expect(Math.max(...result.partitions.map((p) => p.length))).toBeLessThanOrEqual(4);
+    assertValidCut(edges, result);
+  });
+
   it('handles a 2,000-node graph', async () => {
     const service = await wasmService();
     const edges = randomConnected(2000, 6000, 7);

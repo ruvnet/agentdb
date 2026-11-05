@@ -15,7 +15,7 @@
  */
 
 import type { GraphEdges } from '../types/graph.js';
-import { loadMincutWasm, wasmGlobalMincut, type MincutWasmModule } from './integrations/MincutWasmAdapter.js';
+import { loadMincutWasm, wasmGlobalMincut, undirectedEdges, type MincutWasmModule } from './integrations/MincutWasmAdapter.js';
 
 export interface MincutConfig {
   algorithm: 'stoer-wagner' | 'karger' | 'flow-based';
@@ -28,6 +28,12 @@ export interface MincutConfig {
    * sub-millisecond. Default 2000.
    */
   wasmMaxNodes?: number;
+  /**
+   * Largest graph (undirected edges) sent to @ruvector/mincut-wasm. Build time
+   * also grows with edges (~0.4 s at 1k nodes / 25k edges, ~2.2 s at 2k / 51k,
+   * ~15 s for K1000's 500k). Default 20000.
+   */
+  wasmMaxEdges?: number;
 }
 
 export interface MincutResult {
@@ -69,7 +75,7 @@ export class MincutService {
     }
 
     if (!this.initialized) await this.initialize();
-    if (this.mincutWasm && edges.length <= (this.config.wasmMaxNodes ?? 2000)) {
+    if (this.mincutWasm && this.fitsWasm(edges)) {
       try {
         const result = wasmGlobalMincut(this.mincutWasm, edges);
         if (result) {
@@ -121,17 +127,49 @@ export class MincutService {
    * Partition graph based on configuration
    */
   async partition(edges: GraphEdges): Promise<MincutResult> {
+    let result: MincutResult;
     switch (this.config.algorithm) {
       case 'stoer-wagner':
-        return this.stoerWagnerMincut(edges);
+        result = await this.stoerWagnerMincut(edges);
+        break;
       case 'karger':
-        return this.kargerMincut(edges);
+        result = await this.kargerMincut(edges);
+        break;
       case 'flow-based':
         // Use first and last nodes as source/sink
-        return this.flowBasedMincut(edges, 0, edges.length - 1);
+        result = await this.flowBasedMincut(edges, 0, edges.length - 1);
+        break;
       default:
         throw new Error(`Unknown algorithm: ${this.config.algorithm}`);
     }
+    return this.config.maxPartitionSize ? this.boundPartitions(result, edges, this.config.maxPartitionSize) : result;
+  }
+
+  /**
+   * Split every partition larger than maxSize into equal chunks of consecutive
+   * node ids, so no part exceeds maxSize. A minimum cut is often one node
+   * against the rest; callers that process each part (partitioned attention,
+   * quadratic in part size) need bounded parts. cutEdges and cutSize are
+   * recomputed over all parts, each undirected edge counted once.
+   */
+  boundPartitions(result: MincutResult, edges: GraphEdges, maxSize: number): MincutResult {
+    const limit = Math.max(1, Math.floor(maxSize));
+    if (result.partitions.every((p) => p.length <= limit)) return result;
+    const partitions: number[][] = [];
+    for (const part of result.partitions) {
+      if (part.length <= limit) {
+        partitions.push(part);
+        continue;
+      }
+      const sorted = [...part].sort((a, b) => a - b);
+      const chunks = Math.ceil(sorted.length / limit);
+      const size = Math.ceil(sorted.length / chunks);
+      for (let i = 0; i < sorted.length; i += size) partitions.push(sorted.slice(i, i + size));
+    }
+    const side = new Map<number, number>();
+    partitions.forEach((p, idx) => p.forEach((node) => side.set(node, idx)));
+    const cutEdges = undirectedEdges(edges).filter(([u, v]) => side.get(u) !== side.get(v));
+    return { partitions, cutSize: cutEdges.length, cutEdges, algorithm: `${result.algorithm}+bounded` };
   }
 
   /**
@@ -184,6 +222,15 @@ export class MincutService {
       minPartitionSize: Math.min(...sizes),
       cutRatio: totalEdges > 0 ? result.cutSize / totalEdges : 0,
     };
+  }
+
+  private fitsWasm(edges: GraphEdges): boolean {
+    if (edges.length > (this.config.wasmMaxNodes ?? 2000)) return false;
+    const maxEdges = this.config.wasmMaxEdges ?? 20000;
+    let directed = 0;
+    for (const neighbors of edges) directed += neighbors?.length ?? 0;
+    // Adjacency lists are usually symmetric: each undirected edge is listed twice.
+    return directed / 2 <= maxEdges || undirectedEdges(edges).length <= maxEdges;
   }
 
   /** Which implementation answers stoer-wagner queries. */

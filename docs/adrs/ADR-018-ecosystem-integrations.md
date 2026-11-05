@@ -29,7 +29,7 @@ No candidate depends on agentdb. Every candidate's `dependencies`, `optionalDepe
 
 | Package (weekly downloads) | Code path | Default | Test |
 |---|---|---|---|
-| `@ruvector/mincut-wasm` 2.3.0 (47k) | `MincutService.stoerWagnerMincut()` via `controllers/integrations/MincutWasmAdapter.ts`: `WasmMinCut.fromEdges` + `partition()` → `partitions: number[][]` | on, graphs ≤ `wasmMaxNodes` (2000) | `tests/unit/integrations/mincut-wasm.test.ts` |
+| `@ruvector/mincut-wasm` 2.3.0 (47k) | `MincutService.stoerWagnerMincut()` via `controllers/integrations/MincutWasmAdapter.ts`: `WasmMinCut.fromEdges` + `partition()` → `partitions: number[][]` | on, graphs ≤ `wasmMaxNodes` (2000) and ≤ `wasmMaxEdges` (20,000) | `tests/unit/integrations/mincut-wasm.test.ts` |
 | `@ruvector/graph-transformer` 2.0.4 (65k) | `SparsificationService.pprSparsification()` via `controllers/integrations/PprNativeAdapter.ts` (NAPI) | on | `tests/unit/integrations/ppr-graph-transformer.test.ts` |
 | `ruvector-graph-transformer-wasm` 2.0.4 (60k) | same adapter, WASM rung (`initSync` with the .wasm bytes in Node, `init()` in browsers) | when NAPI is missing | same file |
 | `@ruvector/rabitq-wasm` 0.1.2 (51k) | `SqlJsRvfBackend` search via `backends/rvf/RabitqAccelerator.ts` | **off**: `quantizedIndex: 'rabitq'` or `AGENTDB_QUANTIZED_INDEX=rabitq` | `tests/unit/integrations/rabitq-sqljs.test.ts` |
@@ -69,7 +69,7 @@ The agentdb Claude Code plugin gains `injection_guard` (→ `AGENTDB_INJECTION_G
 
 RaBitQ recall for queries unrelated to the data (near-tied neighbours, 5k vectors): 0.74–0.76 at `overfetch` 2, 0.96–0.98 at 10 (the default), 1.000 at 50.
 
-Min cut construction grows about quadratically (6.5 s at 8,000 nodes, 83 s at 20,000), which is why `wasmMaxNodes` defaults to 2000. `WasmThreeLevelHierarchy` builds faster but returned cut values of 0–1 where the true value was 3–4, so it is not used.
+Min cut construction grows about quadratically with nodes (6.5 s at 8,000 nodes, 83 s at 20,000) and with edges (2.2 s at 2,000 nodes / 51k edges, 15 s for K1000's 500k), which is why `wasmMaxNodes` defaults to 2000 and `wasmMaxEdges` to 20,000. The first version capped nodes only; `tests/unit/attention-sparse.test.ts` caught K1000 timing out, and the edge cap fixes it. `WasmThreeLevelHierarchy` builds faster but returned cut values of 0–1 where the true value was 3–4, so it is not used.
 
 aidefence detection: ~100 ms for the first scan (pattern compile), then 0.1–10 ms per field.
 
@@ -82,6 +82,6 @@ aidefence detection: ~100 ms for the first scan (pattern compile), then 0.1–10
 ## Consequences
 
 - A default install also gets `@ruvector/mincut-wasm` (1.2 MB), `@ruvector/rabitq-wasm` (0.3 MB) and `aidefence` (0.3 MB plus dependencies, mostly already present through `@modelcontextprotocol/sdk`). Any of them can fail to install without breaking agentdb.
-- `MincutService` `stoer-wagner` results change for graphs of 2 to 2000 nodes: they are now true minimum cuts, often one low-degree node against the rest, instead of a half split. `algorithm` is `stoer-wagner-wasm`. `partitionedAttention` therefore sees unbalanced partitions on those graphs.
+- `MincutService` `stoer-wagner` results change for graphs of 2 to 2000 nodes: they are now true minimum cuts, often one low-degree node against the rest, instead of a half split. `algorithm` is `stoer-wagner-wasm`. `MincutService.partition()` now applies its `maxPartitionSize` option (declared before but ignored), splitting larger sides into equal chunks of consecutive ids (`algorithm` gains `+bounded`). Without that, partitionedAttention, which is quadratic in part size, timed out on a true one-node-versus-rest cut; with it, its tests run in the same time as on 3.3.0.
 - PPR results now come from 20 fixed native iterations, which keep the mass of a node with no out-edges. Scores on graphs with such nodes differ from the old JavaScript output. `method` is `ppr-napi` or `ppr-wasm`.
 - Pre-existing, not changed here: 38 tests in `tests/unit/sparsification.test.ts` fail on main because they pass object-keyed adjacency (`{0: [1]}`) to an array API.
