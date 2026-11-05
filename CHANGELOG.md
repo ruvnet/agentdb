@@ -5,6 +5,28 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2026-11-05
+
+Ecosystem integrations (docs/adrs/ADR-018). Native ruvector packages now back code paths that previously probed for packages that do not exist. No API removals.
+
+### Added
+
+- **Exact minimum cut via `@ruvector/mincut-wasm`.** `MincutService` (`algorithm: 'stoer-wagner'`) returns the true global min cut (`algorithm: 'stoer-wagner-wasm'`) for graphs up to `wasmMaxNodes` (default 2000). Before, it split node ids in half: on 1,000 nodes that cut 1,003 edges where the minimum is 4. `getBackend()` reports which path ran.
+- **Native Personalized PageRank via `@ruvector/graph-transformer`** (NAPI), with `ruvector-graph-transformer-wasm` as the WASM rung. `SparsificationService` PPR is 40x (500 nodes) to 780x (5,000 nodes) faster, with scores within 4e-7 of the JavaScript path. `getPprRuntime()` reports `napi`, `wasm` or `fallback`.
+- **Opt-in RaBitQ index for `SqlJsRvfBackend`** (`quantizedIndex: 'rabitq'` or `AGENTDB_QUANTIZED_INDEX=rabitq`) via `@ruvector/rabitq-wasm`. At 50,000 384-dim vectors, a query takes 5.2 ms instead of 33.3 ms with recall@10 1.000. Similarities stay exact: candidates are rescored. Writes after the index is built are scanned exactly until the next rebuild. `SqlJsRvfBackend` is now exported from `agentdb/backends`.
+- **Opt-in prompt-injection screening of memory writes** via `aidefence` (`AGENTDB_INJECTION_GUARD=warn|block`, `setInjectionGuard()`, `scanForInjection()`). Covers episode, pattern and skill creates, updates and batch inserts, and therefore every MCP write tool for them. `block` throws `ValidationError` `INJECTION_DETECTED` and fails closed if aidefence is missing.
+- Skills `agentdb-graph-partition`, `agentdb-quantized-search` and `agentdb-memory-guard` for Claude Code (in the agentdb-graph, agentdb-search and agentdb-memory plugins) and Codex (`.agents/skills/`). The agentdb plugin (3.4.0) gains the `injection_guard` option.
+- `npm run benchmark:ecosystem`.
+
+### Changed
+
+- `@ruvector/graph-transformer` moves from `dependencies` to `optionalDependencies`. New optional dependencies: `@ruvector/mincut-wasm`, `@ruvector/rabitq-wasm`, `aidefence`.
+- `stoer-wagner` partitions are now minimum cuts, often one low-degree node against the rest, not halves. Native PPR keeps the mass of nodes with no out-edges, so scores differ from 3.3.0 on graphs with such nodes.
+
+### Fixed
+
+- `MincutService` cached cuts by node and edge count only, so a different graph of the same size got the previous graph's cut.
+
 ## [3.3.0] - 2026-11-01
 
 Full CRUD for episodes, reasoning patterns and skills (docs/adrs/ADR-017). No API removals.

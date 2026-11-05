@@ -10,7 +10,7 @@ Two library services (no MCP tool) for graphs given as adjacency lists (`number[
 | Service | Answers | Native package (optional dependency, installed by default) | Without it |
 |---|---|---|---|
 | `MincutService` (`algorithm: 'stoer-wagner'`) | Exact global minimum cut: the fewest edges whose removal disconnects the graph | `@ruvector/mincut-wasm` | Splits nodes `0..n/2` from the rest. Not a min cut; can cut ~n edges where the true answer is 3 |
-| `SparsificationService` (`method: 'ppr'`) | Personalized PageRank from a seed node, top-k nodes | `@ruvector/graph-transformer` (NAPI), then `ruvector-graph-transformer-wasm` | JavaScript power iteration, same scores within 4e-7, 23x to 400x slower |
+| `SparsificationService` (`method: 'ppr'`) | Personalized PageRank from a seed node, top-k nodes | `@ruvector/graph-transformer` (NAPI), then `ruvector-graph-transformer-wasm` | JavaScript power iteration, same scores within 4e-7, 40x (500 nodes) to 780x (5,000 nodes) slower |
 
 ## Use
 
@@ -32,7 +32,7 @@ Check which path ran: `mincut.getBackend()` returns `'wasm'` or `'fallback'`; `p
 
 ## Know the costs
 
-- Min cut construction grows about quadratically: ~0.1 s at 1,000 nodes, ~1.4 s at 4,000, ~6.5 s at 8,000. Graphs above `wasmMaxNodes` (default 2000) use the fallback. Raise it only for one-off analysis: `new MincutService({ algorithm: 'stoer-wagner', wasmMaxNodes: 8000 })`.
+- Min cut construction grows about quadratically: ~0.15 s at 1,000 nodes, ~0.35 s at 2,000, ~1.7 s at 4,000, ~6.5 s at 8,000. Graphs above `wasmMaxNodes` (default 2000) use the fallback. Raise it only for one-off analysis: `new MincutService({ algorithm: 'stoer-wagner', wasmMaxNodes: 8000 })`.
 - A global min cut is often one low-degree node against the rest. That is the correct answer, not a balanced split. For balanced chunks, cut recursively or use PPR neighbourhoods.
 - Results are cached by graph content, so a repeated query on the same graph is free.
 - Native PPR runs 20 power iterations and keeps the mass of a node with no edges on that node. The fallback drops it, so scores differ on graphs with dead-end nodes.

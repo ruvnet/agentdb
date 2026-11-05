@@ -24,7 +24,7 @@ export interface MincutConfig {
   /**
    * Largest graph (nodes) sent to @ruvector/mincut-wasm; bigger graphs use the
    * JavaScript path. Building the WASM structure grows about quadratically
-   * (~0.1 s at 1k nodes, ~1.4 s at 4k, ~6.5 s at 8k); queries after that are
+   * (~0.15 s at 1k nodes, ~1.7 s at 4k, ~6.5 s at 8k); queries after that are
    * sub-millisecond. Default 2000.
    */
   wasmMaxNodes?: number;

@@ -28,9 +28,9 @@ The environment variable `AGENTDB_QUANTIZED_INDEX=rabitq` turns it on for every 
 
 | Vectors | Exact scan | RaBitQ | Recall@10 | Index build (first query) |
 |---|---|---|---|---|
-| 5,000 | 2.2 ms | 2.3 ms | 1.000 | 0.4 s |
-| 20,000 | 7.5 ms | 3.2 ms | 1.000 | 1.3 s |
-| 50,000 | 22.4 ms | 4.0 ms | 1.000 | 4.6 s |
+| 5,000 | 3.3 ms | 3.1 ms | 1.000 | 0.5 s |
+| 20,000 | 8.5 ms | 3.4 ms | 1.000 | 1.4 s |
+| 50,000 | 33.3 ms | 5.2 ms | 1.000 | 5.1 s |
 
 For queries unrelated to the data, where neighbours are near-tied, recall@10 is 0.96 to 0.98 at the default `overfetch: 10` and 1.000 at 50.
 

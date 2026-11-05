@@ -122,6 +122,17 @@ That registers 41 MCP tools — `agentdb_pattern_store`, `agentdb_pattern_search
 | 🛡️ **Enterprise Security** | JWT auth, API key rotation, Argon2id hashing, SOC2 / GDPR audit trails, cryptographic witness chain |
 | 🔗 **agentic-flow Integration** | Drop-in for [`agentic-flow`](https://github.com/ruvnet/agentic-flow) — backs ReasoningBank, MemoryController, NightlyLearner, and 30+ agents |
 
+### Optional native integrations
+
+Installed by default as optional dependencies. Each has a JavaScript fallback, so agentdb works without them ([ADR-018](docs/adrs/ADR-018-ecosystem-integrations.md)).
+
+| Package | Powers | Measured |
+|---|---|---|
+| [`@ruvector/graph-transformer`](https://www.npmjs.com/package/@ruvector/graph-transformer) | Personalized PageRank in `SparsificationService` and sparse attention | 40x–780x faster than the JS path (500–5,000 nodes) |
+| [`@ruvector/mincut-wasm`](https://www.npmjs.com/package/@ruvector/mincut-wasm) | Exact global min cut in `MincutService` and partitioned attention | cut of 4 edges where the old split cut 1,003 (1,000 nodes) |
+| [`@ruvector/rabitq-wasm`](https://www.npmjs.com/package/@ruvector/rabitq-wasm) | Opt-in 1-bit index for the built-in sql.js backend (`quantizedIndex: 'rabitq'`) | 6.4x faster at 50k vectors, recall@10 1.000 |
+| [`aidefence`](https://www.npmjs.com/package/aidefence) | Opt-in prompt-injection screening of stored memories (`AGENTDB_INJECTION_GUARD=warn\|block`) | 0.1–10 ms per field |
+
 ---
 
 ## 🧠 Self-Learning Loop
