@@ -82,6 +82,15 @@ export {
   ValidationError,
 } from './security/input-validation.js';
 export {
+  setInjectionGuard,
+  getInjectionGuardMode,
+  scanForInjection,
+  screenStoredText,
+  type InjectionGuardMode,
+  type InjectionSeverity,
+  type InjectionFinding,
+} from './security/injection-guard.js';
+export {
   buildMcpToolPolicy,
   filterMcpTools,
   isMcpToolAllowed,

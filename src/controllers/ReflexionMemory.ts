@@ -38,6 +38,7 @@ import {
   orderByScore,
   RERANK_DEPTH,
 } from './episode-hybrid.js';
+import { screenStoredText } from '../security/injection-guard.js';
 
 function finiteNumber(value: unknown, name: string): number {
   const n = Number(value);
@@ -142,6 +143,7 @@ export class ReflexionMemory {
    *   often in-memory or rebuildable from SQL).
    */
   async storeEpisode(episode: Episode): Promise<number> {
+    await screenStoredText('episode', { task: episode.task, input: episode.input, output: episode.output, critique: episode.critique });
     // Invalidate episode caches on write
     this.queryCache.invalidateCategory('episodes');
     this.queryCache.invalidateCategory('task-stats');
@@ -1059,6 +1061,7 @@ export class ReflexionMemory {
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
       throw new CrudValidationError('patch must be an object', 'patch');
     }
+    await screenStoredText('episode', { task: patch.task, input: patch.input, output: patch.output, critique: patch.critique });
     const keys = Object.keys(patch).filter(k => (patch as Record<string, unknown>)[k] !== undefined);
     for (const k of keys) {
       if (!ReflexionMemory.EPISODE_PATCH_FIELDS.has(k)) {

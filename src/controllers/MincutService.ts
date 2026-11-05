@@ -9,17 +9,31 @@
  * - Karger's randomized algorithm (probabilistic, good for large graphs)
  * - Flow-based mincut (max-flow min-cut theorem)
  * - Partition caching for repeated queries
- * - WASM/NAPI acceleration when available
+ * - Exact global min cut through @ruvector/mincut-wasm when installed (ADR-018)
  *
  * Goal: 50-80% memory reduction through dynamic graph partitioning
  */
 
 import type { GraphEdges } from '../types/graph.js';
+import { loadMincutWasm, wasmGlobalMincut, undirectedEdges, type MincutWasmModule } from './integrations/MincutWasmAdapter.js';
 
 export interface MincutConfig {
   algorithm: 'stoer-wagner' | 'karger' | 'flow-based';
   maxPartitionSize?: number;
   minCutThreshold?: number;
+  /**
+   * Largest graph (nodes) sent to @ruvector/mincut-wasm; bigger graphs use the
+   * JavaScript path. Building the WASM structure grows about quadratically
+   * (~0.15 s at 1k nodes, ~1.7 s at 4k, ~6.5 s at 8k); queries after that are
+   * sub-millisecond. Default 2000.
+   */
+  wasmMaxNodes?: number;
+  /**
+   * Largest graph (undirected edges) sent to @ruvector/mincut-wasm. Build time
+   * also grows with edges (~0.4 s at 1k nodes / 25k edges, ~2.2 s at 2k / 51k,
+   * ~15 s for K1000's 500k). Default 20000.
+   */
+  wasmMaxEdges?: number;
 }
 
 export interface MincutResult {
@@ -36,31 +50,17 @@ export interface Partition {
 }
 
 export class MincutService {
-  private wasmModule: any;
-  private napiModule: any;
+  private mincutWasm: MincutWasmModule | null = null;
   private initialized: boolean = false;
   private partitionCache: Map<string, MincutResult> = new Map();
 
   constructor(private config: MincutConfig) {}
 
   async initialize(): Promise<void> {
-    try {
-      // Try NAPI first
-      // @ts-expect-error - Optional dependency may not be installed
-      const napi = await import('@ruvector/mincut');
-      this.napiModule = napi;
-      console.error('✅ Loaded @ruvector/mincut NAPI module');
-    } catch (err) {
-      // Fall back to WASM
-      try {
-        // @ts-expect-error - Optional dependency may not be installed
-        const wasm = await import('ruvector-mincut-wasm');
-        await wasm.default();
-        this.wasmModule = wasm;
-        console.error('✅ Loaded ruvector-mincut-wasm module');
-      } catch (wasmErr) {
-        console.warn('⚠️  No mincut bindings available, using fallback');
-      }
+    if (this.initialized) return;
+    this.mincutWasm = await loadMincutWasm();
+    if (!this.mincutWasm) {
+      console.warn('⚠️  @ruvector/mincut-wasm not installed, using JavaScript fallback');
     }
     this.initialized = true;
   }
@@ -74,16 +74,17 @@ export class MincutService {
       return this.partitionCache.get(cacheKey)!;
     }
 
-    if (this.napiModule?.stoerWagner) {
-      const result = this.napiModule.stoerWagner(edges);
-      this.partitionCache.set(cacheKey, result);
-      return result;
-    }
-
-    if (this.wasmModule?.stoer_wagner) {
-      const result = this.wasmModule.stoer_wagner(edges);
-      this.partitionCache.set(cacheKey, result);
-      return result;
+    if (!this.initialized) await this.initialize();
+    if (this.mincutWasm && this.fitsWasm(edges)) {
+      try {
+        const result = wasmGlobalMincut(this.mincutWasm, edges);
+        if (result) {
+          this.partitionCache.set(cacheKey, result);
+          return result;
+        }
+      } catch (err) {
+        console.warn('⚠️  @ruvector/mincut-wasm failed, using JavaScript fallback:', (err as Error).message);
+      }
     }
 
     // JavaScript fallback
@@ -118,10 +119,6 @@ export class MincutService {
     source: number,
     sink: number
   ): Promise<MincutResult> {
-    if (this.napiModule?.maxFlowMinCut) {
-      return this.napiModule.maxFlowMinCut(edges, source, sink);
-    }
-
     // Use Ford-Fulkerson algorithm
     return this.fordFulkersonMincut(edges, source, sink);
   }
@@ -130,17 +127,49 @@ export class MincutService {
    * Partition graph based on configuration
    */
   async partition(edges: GraphEdges): Promise<MincutResult> {
+    let result: MincutResult;
     switch (this.config.algorithm) {
       case 'stoer-wagner':
-        return this.stoerWagnerMincut(edges);
+        result = await this.stoerWagnerMincut(edges);
+        break;
       case 'karger':
-        return this.kargerMincut(edges);
+        result = await this.kargerMincut(edges);
+        break;
       case 'flow-based':
         // Use first and last nodes as source/sink
-        return this.flowBasedMincut(edges, 0, edges.length - 1);
+        result = await this.flowBasedMincut(edges, 0, edges.length - 1);
+        break;
       default:
         throw new Error(`Unknown algorithm: ${this.config.algorithm}`);
     }
+    return this.config.maxPartitionSize ? this.boundPartitions(result, edges, this.config.maxPartitionSize) : result;
+  }
+
+  /**
+   * Split every partition larger than maxSize into equal chunks of consecutive
+   * node ids, so no part exceeds maxSize. A minimum cut is often one node
+   * against the rest; callers that process each part (partitioned attention,
+   * quadratic in part size) need bounded parts. cutEdges and cutSize are
+   * recomputed over all parts, each undirected edge counted once.
+   */
+  boundPartitions(result: MincutResult, edges: GraphEdges, maxSize: number): MincutResult {
+    const limit = Math.max(1, Math.floor(maxSize));
+    if (result.partitions.every((p) => p.length <= limit)) return result;
+    const partitions: number[][] = [];
+    for (const part of result.partitions) {
+      if (part.length <= limit) {
+        partitions.push(part);
+        continue;
+      }
+      const sorted = [...part].sort((a, b) => a - b);
+      const chunks = Math.ceil(sorted.length / limit);
+      const size = Math.ceil(sorted.length / chunks);
+      for (let i = 0; i < sorted.length; i += size) partitions.push(sorted.slice(i, i + size));
+    }
+    const side = new Map<number, number>();
+    partitions.forEach((p, idx) => p.forEach((node) => side.set(node, idx)));
+    const cutEdges = undirectedEdges(edges).filter(([u, v]) => side.get(u) !== side.get(v));
+    return { partitions, cutSize: cutEdges.length, cutEdges, algorithm: `${result.algorithm}+bounded` };
   }
 
   /**
@@ -195,6 +224,20 @@ export class MincutService {
     };
   }
 
+  private fitsWasm(edges: GraphEdges): boolean {
+    if (edges.length > (this.config.wasmMaxNodes ?? 2000)) return false;
+    const maxEdges = this.config.wasmMaxEdges ?? 20000;
+    let directed = 0;
+    for (const neighbors of edges) directed += neighbors?.length ?? 0;
+    // Adjacency lists are usually symmetric: each undirected edge is listed twice.
+    return directed / 2 <= maxEdges || undirectedEdges(edges).length <= maxEdges;
+  }
+
+  /** Which implementation answers stoer-wagner queries. */
+  getBackend(): 'wasm' | 'fallback' {
+    return this.mincutWasm ? 'wasm' : 'fallback';
+  }
+
   /**
    * Clear partition cache
    */
@@ -216,8 +259,24 @@ export class MincutService {
   }
 
   // Helper methods
+  /** FNV-1a over the adjacency lists: different graphs of the same size get different keys. */
   private hashEdges(edges: GraphEdges): string {
-    return `${edges.length}-${edges.reduce((sum, neighbors) => sum + (neighbors?.length || 0), 0)}`;
+    let h = 0x811c9dc5;
+    let count = 0;
+    const mix = (x: number) => {
+      h ^= x & 0xffff;
+      h = Math.imul(h, 0x01000193);
+      h ^= x >>> 16;
+      h = Math.imul(h, 0x01000193);
+    };
+    for (let i = 0; i < edges.length; i++) {
+      mix(0xfffffff0 - i);
+      for (const j of edges[i] || []) {
+        mix(j);
+        count++;
+      }
+    }
+    return `${edges.length}-${count}-${(h >>> 0).toString(16)}`;
   }
 
   private stoerWagnerFallback(edges: GraphEdges): MincutResult {

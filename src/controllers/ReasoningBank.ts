@@ -35,6 +35,7 @@ import {
   CrudValidationError,
 } from './crud-helpers.js';
 import { TopK, squaredNorm, blobToFloat32 } from '../utils/top-k.js';
+import { screenStoredText } from '../security/injection-guard.js';
 
 /** Parse JSON from DB row values without throwing on malformed data. */
 function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
@@ -248,6 +249,7 @@ export class ReasoningBank {
    * v2 (VectorBackend): Stores metadata in SQLite, vectors in VectorBackend
    */
   async storePattern(pattern: ReasoningPattern): Promise<number> {
+    await screenStoredText('pattern', { taskType: pattern.taskType, approach: pattern.approach });
     // Generate embedding from approach text
     const embedding = await this.embedder.embedPassage(
       `${pattern.taskType}: ${pattern.approach}`
@@ -774,6 +776,7 @@ export class ReasoningBank {
   ): Promise<{ pattern: ReasoningPattern; reembedded: boolean; changedFields: string[] } | null> {
     const id = toRecordId(patternId, 'patternId');
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new CrudValidationError('patch must be an object', 'patch');
+    await screenStoredText('pattern', { taskType: patch.taskType, approach: patch.approach });
     const keys = Object.keys(patch).filter(k => (patch as Record<string, unknown>)[k] !== undefined);
     for (const k of keys) {
       if (!ReasoningBank.PATTERN_PATCH_FIELDS.has(k)) throw new CrudValidationError(`"${k}" cannot be updated`, k);

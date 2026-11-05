@@ -29,7 +29,7 @@
     {
       "name": "agentdb-memory",
       "source": "./plugins/agentdb-memory",
-      "description": "Episodic replay (Reflexion) + skill library. /remember and /recall slash commands; agentdb-curator agent for nightly consolidation."
+      "description": "Episodic replay (Reflexion) + skill library. /remember and /recall slash commands; agentdb-curator agent for nightly consolidation; aidefence prompt-injection screening of memory writes."
     },
     {
       "name": "agentdb-causal",
@@ -44,12 +44,12 @@
     {
       "name": "agentdb-graph",
       "source": "./plugins/agentdb-graph",
-      "description": "Graph queries — Cypher execution, k-hop traversal, hyperedge search."
+      "description": "Graph queries — Cypher execution, k-hop traversal, hyperedge search, plus exact min cut (@ruvector/mincut-wasm) and Personalized PageRank sparsification (@ruvector/graph-transformer)."
     },
     {
       "name": "agentdb-search",
       "source": "./plugins/agentdb-search",
-      "description": "Advanced retrieval — MMR diversity rerank, explainable recall, metadata filters, hybrid (BM25 + dense) search."
+      "description": "Advanced retrieval — MMR diversity rerank, explainable recall, metadata filters, hybrid (BM25 + dense) search, and the opt-in RaBitQ quantized index (@ruvector/rabitq-wasm)."
     }
   ]
 }

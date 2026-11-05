@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.4.0]
+
+- `.mcp.json` starts `agentdb@3.4.0` (agentdb ADR-018: ecosystem integrations).
+- New option `injection_guard` (`AGENTDB_INJECTION_GUARD`): `warn` or `block` screens episode, pattern and skill writes with aidefence for prompt injection. Empty (default) is off.
+
 ## [3.3.0]
 
 - `.mcp.json` starts `agentdb@3.3.0`: get, list and update for stored records, patterns and skills, plus `agentdb_pattern_delete` and `skill_delete` (agentdb ADR-017).

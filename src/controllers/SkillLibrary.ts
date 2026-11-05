@@ -19,6 +19,7 @@ import { NodeIdMapper } from '../utils/NodeIdMapper.js';
 import { QueryCache, type QueryCacheConfig } from '../core/QueryCache.js';
 import { TopK, squaredNorm, cosineWithQueryNorm, blobToFloat32 } from '../utils/top-k.js';
 import { assertMetadata, embeddingBlob, inTransaction, mergeMetadata, toPage, toRecordId, CrudValidationError } from './crud-helpers.js';
+import { screenStoredText } from '../security/injection-guard.js';
 
 /** Vector ids this controller writes: "skill:<rowid>" */
 const SKILL_VECTOR_ID = /^skill:(\d+)$/;
@@ -98,6 +99,7 @@ export class SkillLibrary {
    * Invalidates skill cache
    */
   async createSkill(skill: Skill): Promise<number> {
+    await screenStoredText('skill', { name: skill.name, description: skill.description, code: skill.code });
     // Invalidate skills cache on write
     this.queryCache.invalidateCategory('skills');
     // Use GraphDatabaseAdapter if available (AgentDB v2)
@@ -979,6 +981,7 @@ export class SkillLibrary {
     this.assertSqlAddressable('updateSkill');
     const id = toRecordId(skillId, 'skillId');
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new CrudValidationError('patch must be an object', 'patch');
+    await screenStoredText('skill', { name: patch.name, description: patch.description, code: patch.code });
     const keys = Object.keys(patch).filter(k => (patch as Record<string, unknown>)[k] !== undefined);
     for (const k of keys) {
       if (!SkillLibrary.SKILL_PATCH_FIELDS.has(k)) throw new CrudValidationError(`"${k}" cannot be updated`, k);

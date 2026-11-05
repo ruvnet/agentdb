@@ -1,6 +1,6 @@
 {
   "name": "agentdb-graph",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Graph operations on AgentDB — Cypher execution, k-hop traversal, hyperedge search.",
   "author": {
     "name": "ruvnet",
