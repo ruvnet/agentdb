@@ -22,6 +22,9 @@ export { searchVectors, isAsyncVectorBackend } from './VectorBackend.js';
 export { RuVectorBackend } from './ruvector/RuVectorBackend.js';
 export { RuVectorLearning } from './ruvector/RuVectorLearning.js';
 export { HNSWLibBackend } from './hnswlib/HNSWLibBackend.js';
+// Built-in sql.js RVF backend; `quantizedIndex: 'rabitq'` adds the optional RaBitQ index (ADR-018)
+export { SqlJsRvfBackend } from './rvf/SqlJsRvfBackend.js';
+export type { RabitqOptions, RabitqStats } from './rvf/RabitqAccelerator.js';
 
 // Factory and detection
 export {

@@ -1,7 +1,7 @@
 {
   "name": "agentdb",
   "description": "AgentDB's own standalone MCP server (npx agentdb mcp start) for Claude Code: vector memory, reflexion episodes, skills, causal edges and learning tools, plus a mod that keeps secrets out of memory and refuses destructive admin tools unless enabled. Not the ruflo-agentdb plugin, which reaches AgentDB through ruflo's MCP server; the two can be installed side by side.",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "author": {
     "name": "ruvnet",
     "url": "https://github.com/ruvnet"
@@ -48,13 +48,24 @@
       "required": false,
       "default": ""
     },
+    "injection_guard": {
+      "type": "string",
+      "title": "Prompt-injection screening",
+      "description": "Sets AGENTDB_INJECTION_GUARD: warn logs, block refuses episode, pattern and skill writes (single, batch and update) that aidefence flags as prompt injection. block fails closed if the aidefence package is missing. Empty means off.",
+      "required": false,
+      "default": ""
+    },
     "secret_guard": {
       "type": "string",
       "title": "Secret write guard",
       "description": "enforce (default): refuse AgentDB memory writes that hold what looks like a key, token, password or private key. notify: let them through with a toast. off: no check.",
       "required": false,
       "default": "enforce",
-      "options": ["off", "notify", "enforce"]
+      "options": [
+        "off",
+        "notify",
+        "enforce"
+      ]
     },
     "allow_destructive": {
       "type": "boolean",

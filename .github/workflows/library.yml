@@ -5,6 +5,8 @@ on:
     paths:
       - 'src/**'
       - 'tests/**'
+      - '.agents/**'
+      - 'plugins/*/skills/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/library.yml'
@@ -13,6 +15,8 @@ on:
     paths:
       - 'src/**'
       - 'tests/**'
+      - '.agents/**'
+      - 'plugins/*/skills/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/library.yml'
