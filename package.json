@@ -164,7 +164,6 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.20.1",
     "@opentelemetry/api": "^1.9.0",
-    "@ruvector/graph-transformer": "^2.0.4",
     "ajv": "^8.18.0",
     "sql.js": "^1.13.0"
   },
@@ -199,6 +198,8 @@
     "@ruvector/attention": "^0.1.2",
     "@ruvector/gnn": "^0.1.23",
     "@ruvector/graph-node": "^2.0.2",
+    "@ruvector/graph-transformer": "^2.0.4",
+    "@ruvector/mincut-wasm": "^2.3.0",
     "@ruvector/router": "^0.1.15",
     "@ruvector/ruvllm": "^2.5.1",
     "@ruvector/rvf": "^0.2.3",

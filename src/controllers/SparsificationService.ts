@@ -9,7 +9,8 @@
  * - PPR-based node importance scoring
  * - Random walk sampling
  * - Spectral sparsification
- * - WASM/NAPI bindings with JavaScript fallback
+ * - PPR through @ruvector/graph-transformer (NAPI) or ruvector-graph-transformer-wasm,
+ *   with a JavaScript fallback (ADR-018)
  * - Zero-copy operations where supported
  *
  * Based on:
@@ -21,6 +22,7 @@
  */
 
 import type { GraphEdges } from '../types/graph.js';
+import { loadPprBackend, toNativeAdjacency, type PprBackend } from './integrations/PprNativeAdapter.js';
 
 // Re-export for convenience
 export type { GraphEdges };
@@ -66,8 +68,7 @@ export interface SparsificationResult {
  * SparsificationService - Reduces graph size while preserving structure
  */
 export class SparsificationService {
-  private wasmModule: any;
-  private napiModule: any;
+  private pprBackend: PprBackend | null = null;
   private initialized: boolean = false;
   private config: SparsificationConfig;
 
@@ -90,28 +91,9 @@ export class SparsificationService {
       return;
     }
 
-    try {
-      // Try NAPI first (fastest)
-      // Use dynamic import with string to avoid TypeScript module resolution
-      const napiModuleName = '@ruvector/sparsifier';
-      const napi = await import(/* @vite-ignore */ napiModuleName).catch(() => null);
-      if (napi) {
-        this.napiModule = napi;
-        console.error('✅ SparsificationService: Loaded @ruvector/sparsifier NAPI module');
-      } else {
-        // Fall back to WASM
-        const wasmModuleName = 'ruvector-sparsifier-wasm';
-        const wasm = await import(/* @vite-ignore */ wasmModuleName).catch(() => null);
-        if (wasm) {
-          await wasm.default();
-          this.wasmModule = wasm;
-          console.error('✅ SparsificationService: Loaded ruvector-sparsifier-wasm module');
-        } else {
-          console.warn('⚠️  SparsificationService: No native bindings available, using JavaScript fallback');
-        }
-      }
-    } catch (err) {
-      console.warn('⚠️  SparsificationService: Initialization error, using JavaScript fallback:', err);
+    this.pprBackend = await loadPprBackend();
+    if (!this.pprBackend) {
+      console.warn('⚠️  SparsificationService: @ruvector/graph-transformer not available, using JavaScript fallback');
     }
 
     this.initialized = true;
@@ -137,49 +119,23 @@ export class SparsificationService {
   ): Promise<SparsificationResult> {
     const startTime = performance.now();
 
-    // Try NAPI first
-    if (this.napiModule?.pprScores) {
+    if (!this.initialized) await this.initialize();
+    const n = edges.length;
+    if (this.pprBackend && n > 0 && Number.isInteger(sourceNode) && sourceNode >= 0 && sourceNode < n) {
       try {
-        const scores = this.napiModule.pprScores(sourceNode, edges, alpha);
-        const topKIndices = this.getTopK(scores, topK);
-        const executionTimeMs = performance.now() - startTime;
-
+        const raw = this.pprBackend.scores(sourceNode, toNativeAdjacency(edges), alpha);
+        const scores = Float32Array.from(raw);
+        const totalEdges = this.countTotalEdges(edges);
         return {
-          topKIndices,
+          topKIndices: this.getTopK(scores, topK),
           scores,
-          sparsityRatio: topK / this.countTotalEdges(edges),
-          method: 'ppr-napi',
-          executionTimeMs,
-          metadata: {
-            totalNodes: edges.length,
-            totalEdges: this.countTotalEdges(edges),
-          },
+          sparsityRatio: totalEdges > 0 ? topK / totalEdges : 0,
+          method: `ppr-${this.pprBackend.runtime}`,
+          executionTimeMs: performance.now() - startTime,
+          metadata: { iterations: 20, totalNodes: n, totalEdges },
         };
       } catch (err) {
-        console.warn('NAPI PPR failed, falling back:', err);
-      }
-    }
-
-    // Try WASM
-    if (this.wasmModule?.ppr_scores) {
-      try {
-        const scores = this.wasmModule.ppr_scores(sourceNode, edges, alpha);
-        const topKIndices = this.getTopK(scores, topK);
-        const executionTimeMs = performance.now() - startTime;
-
-        return {
-          topKIndices,
-          scores,
-          sparsityRatio: topK / this.countTotalEdges(edges),
-          method: 'ppr-wasm',
-          executionTimeMs,
-          metadata: {
-            totalNodes: edges.length,
-            totalEdges: this.countTotalEdges(edges),
-          },
-        };
-      } catch (err) {
-        console.warn('WASM PPR failed, falling back:', err);
+        console.warn(`${this.pprBackend.runtime} PPR failed, falling back:`, (err as Error).message);
       }
     }
 
@@ -270,18 +226,8 @@ export class SparsificationService {
   ): Promise<SparsificationResult> {
     const startTime = performance.now();
 
-    // Try NAPI spectral sparsification
-    if (this.napiModule?.spectralSparsify) {
-      try {
-        const result = this.napiModule.spectralSparsify(edges, topK);
-        result.executionTimeMs = performance.now() - startTime;
-        return result;
-      } catch (err) {
-        console.warn('NAPI spectral sparsification failed, falling back:', err);
-      }
-    }
-
-    // Fallback: degree-based approximation
+    // No published spectral sparsifier binding yet (ruvector-sparsifier is crates.io only):
+    // degree-based approximation
     return this.degreeBasedSparsification(edges, topK);
   }
 
@@ -459,6 +405,11 @@ export class SparsificationService {
    */
   private countTotalEdges(edges: GraphEdges): number {
     return edges.reduce((sum, neighbors) => sum + (neighbors?.length || 0), 0);
+  }
+
+  /** Which implementation answers PPR queries. */
+  getPprRuntime(): 'napi' | 'wasm' | 'fallback' {
+    return this.pprBackend?.runtime ?? 'fallback';
   }
 
   /**
