@@ -209,6 +209,7 @@
     "@ruvector/rvf-solver": "^0.1.7",
     "@ruvector/rvf-wasm": "^0.1.6",
     "@ruvector/sona": "^0.1.4",
+    "aidefence": "^3.0.1",
     "argon2": "^0.44.0",
     "better-sqlite3": "^11.8.1",
     "chalk": "^5.3.0",
