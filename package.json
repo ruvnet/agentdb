@@ -83,7 +83,8 @@
     "build:model": "node scripts/build-model-rvf.mjs",
     "prebuild": "node scripts/inline-schemas.mjs",
     "test:mcp-crud": "node tests/mcp-crud-e2e.mjs",
-    "benchmark:crud": "tsx benchmarks/crud-benchmark.mts"
+    "benchmark:crud": "tsx benchmarks/crud-benchmark.mts",
+    "benchmark:ecosystem": "tsx benchmarks/ecosystem-benchmark.mts"
   },
   "keywords": [
     "agentdb",
@@ -200,6 +201,7 @@
     "@ruvector/graph-node": "^2.0.2",
     "@ruvector/graph-transformer": "^2.0.4",
     "@ruvector/mincut-wasm": "^2.3.0",
+    "@ruvector/rabitq-wasm": "^0.1.2",
     "@ruvector/router": "^0.1.15",
     "@ruvector/ruvllm": "^2.5.1",
     "@ruvector/rvf": "^0.2.3",

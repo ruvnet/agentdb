@@ -133,6 +133,13 @@ describe('@ruvector/mincut-wasm integration', () => {
     expect((await service.stoerWagnerMincut([[]])).partitions).toHaveLength(2);
   });
 
+  it('keeps the JavaScript path above wasmMaxNodes', async () => {
+    const service = new MincutService({ algorithm: 'stoer-wagner', wasmMaxNodes: 50 });
+    await service.initialize();
+    expect((await service.stoerWagnerMincut(randomConnected(60, 60, 3))).algorithm).toBe('stoer-wagner-fallback');
+    expect((await service.stoerWagnerMincut(randomConnected(50, 60, 3))).algorithm).toBe('stoer-wagner-wasm');
+  });
+
   it('handles a 2,000-node graph', async () => {
     const service = await wasmService();
     const edges = randomConnected(2000, 6000, 7);

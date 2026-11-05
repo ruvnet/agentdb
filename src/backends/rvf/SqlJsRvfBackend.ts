@@ -16,6 +16,8 @@
  * - Pending write queue with flushSync() before search
  * - save() → db.export() → write Uint8Array to .rvf file
  * - load() → read file → new SQL.Database(buffer) → rebuild cache
+ * - Opt-in RaBitQ candidate index (`quantizedIndex: 'rabitq'` or
+ *   AGENTDB_QUANTIZED_INDEX=rabitq) via @ruvector/rabitq-wasm (ADR-018)
  */
 
 import type {
@@ -49,6 +51,7 @@ import {
   persistSqlJsDatabase,
   type DatabaseFileState,
 } from '../../db-fallback.js';
+import { RabitqAccelerator, loadRabitq, type RabitqOptions, type RabitqStats } from './RabitqAccelerator.js';
 
 /** Cached entry in the in-memory vector store */
 interface CacheEntry {
@@ -125,6 +128,11 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
   private pending: Array<{ id: string; vector: Float32Array; metadata?: Record<string, unknown> }> = [];
   private batchThreshold: number;
 
+  // Optional RaBitQ candidate index (null = exact scan only)
+  private quantizedIndex: 'rabitq' | 'none';
+  private rabitqOptions: RabitqOptions;
+  private rabitq: RabitqAccelerator | null = null;
+
   constructor(config: VectorConfig) {
     const dimension = config.dimension ?? config.dimensions;
     if (!dimension) {
@@ -139,6 +147,10 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
       Math.max(1, (config as unknown as Record<string, unknown>).batchThreshold as number ?? DEFAULT_BATCH_THRESHOLD),
       MAX_BATCH_SIZE,
     );
+    const extra = config as unknown as Record<string, unknown>;
+    const envIndex = typeof process !== 'undefined' ? process.env?.AGENTDB_QUANTIZED_INDEX : undefined;
+    this.quantizedIndex = (extra.quantizedIndex ?? envIndex) === 'rabitq' ? 'rabitq' : 'none';
+    this.rabitqOptions = (extra.rabitq as RabitqOptions | undefined) ?? {};
   }
 
   /**
@@ -162,9 +174,29 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
 
     this.db = fileBuffer ? new SQL.Database(fileBuffer) : new SQL.Database();
     this.createSchema();
+    await this.initQuantizedIndex();
     this.rebuildCache();
     this.initialized = true;
     this._registerForFinalization();
+  }
+
+  private async initQuantizedIndex(): Promise<void> {
+    if (this.quantizedIndex !== 'rabitq' || this.rabitq) return;
+    if (this.metricType === 'ip') {
+      console.warn('[SqlJsRvfBackend] RaBitQ ranks by L2; ip metric keeps the exact scan');
+      return;
+    }
+    const Rabitq = await loadRabitq();
+    if (!Rabitq) {
+      console.warn('[SqlJsRvfBackend] @ruvector/rabitq-wasm not installed; using exact scan');
+      return;
+    }
+    this.rabitq = new RabitqAccelerator(Rabitq, this.dim, this.metricType === 'cosine', this.rabitqOptions);
+  }
+
+  /** RaBitQ index state, or null when the exact scan answers every query. */
+  getQuantizedIndexStats(): RabitqStats | null {
+    return this.rabitq?.stats() ?? null;
   }
 
   // ─── Sync VectorBackend interface ───
@@ -214,6 +246,7 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
     validateId(id);
     this.db.run('DELETE FROM rvf_vectors WHERE id = ?', [id]);
     this.cache.delete(id);
+    this.rabitq?.touch(id);
     return true;
   }
 
@@ -284,6 +317,7 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
     }
     this.pending = [];
     this.cache.clear();
+    this.rabitq?.reset();
     this.initialized = false;
     if (persistenceError) throw persistenceError;
   }
@@ -386,6 +420,7 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
     this.db.run('DELETE FROM rvf_vectors WHERE id = ?', [id]);
     const existed = this.cache.has(id);
     this.cache.delete(id);
+    this.rabitq?.touch(id);
     return existed;
   }
 
@@ -447,6 +482,7 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
 
   private rebuildCache(): void {
     this.cache.clear();
+    this.rabitq?.reset();
     const rows = this.db.exec('SELECT id, embedding, metadata FROM rvf_vectors');
     if (rows.length === 0) return;
 
@@ -481,6 +517,7 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
     }
     const copy = new Float32Array(vec);
     this.cache.set(id, { embedding: copy, metadata, normSq: squaredNormSIMD(copy) });
+    this.rabitq?.touch(id);
   }
 
   private flushSync(): void {
@@ -515,7 +552,15 @@ export class SqlJsRvfBackend implements VectorBackendAsync {
     const queryNormSq = this.metricType === 'cosine' ? squaredNormSIMD(queryVec) : 0;
     const top = new TopK<[string, CacheEntry]>(safeK);
 
-    for (const pair of this.cache) {
+    // RaBitQ narrows the scan to candidate ids; scores below stay exact.
+    const candidateIds = this.rabitq && !options?.filter
+      ? this.rabitq.candidates(queryVec, safeK, this.cache)
+      : null;
+    const pairs: Iterable<[string, CacheEntry]> = candidateIds
+      ? Array.from(candidateIds, (cid) => [cid, this.cache.get(cid)!] as [string, CacheEntry])
+      : this.cache;
+
+    for (const pair of pairs) {
       const entry = pair[1];
       // Apply metadata filter if provided
       if (options?.filter && !this.matchesFilter(entry.metadata, options.filter)) {

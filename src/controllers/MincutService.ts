@@ -21,6 +21,13 @@ export interface MincutConfig {
   algorithm: 'stoer-wagner' | 'karger' | 'flow-based';
   maxPartitionSize?: number;
   minCutThreshold?: number;
+  /**
+   * Largest graph (nodes) sent to @ruvector/mincut-wasm; bigger graphs use the
+   * JavaScript path. Building the WASM structure grows about quadratically
+   * (~0.1 s at 1k nodes, ~1.4 s at 4k, ~6.5 s at 8k); queries after that are
+   * sub-millisecond. Default 2000.
+   */
+  wasmMaxNodes?: number;
 }
 
 export interface MincutResult {
@@ -62,7 +69,7 @@ export class MincutService {
     }
 
     if (!this.initialized) await this.initialize();
-    if (this.mincutWasm) {
+    if (this.mincutWasm && edges.length <= (this.config.wasmMaxNodes ?? 2000)) {
       try {
         const result = wasmGlobalMincut(this.mincutWasm, edges);
         if (result) {
