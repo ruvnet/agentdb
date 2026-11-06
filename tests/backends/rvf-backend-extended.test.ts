@@ -202,7 +202,7 @@ describe('ADR-007 Phase 1: RvfBackend Extended APIs', () => {
   describe('FilterBuilder', () => {
     it('should build eq filter from plain value', () => {
       const filter = FilterBuilder.buildFilter({ status: 'active' });
-      expect(filter).toEqual({ op: 'eq', fieldId: 0, value: 'active' });
+      expect(filter).toEqual({ op: 'eq', field: 'status', value: 'active' });
     });
 
     it('should build AND of multiple predicates', () => {
@@ -211,46 +211,53 @@ describe('ADR-007 Phase 1: RvfBackend Extended APIs', () => {
       expect((filter as { op: string }).op).toBe('and');
       const andExpr = filter as { op: 'and'; exprs: RvfFilterExpr[] };
       expect(andExpr.exprs).toHaveLength(2);
-      expect(andExpr.exprs[0]).toEqual({ op: 'eq', fieldId: 0, value: 'active' });
-      expect(andExpr.exprs[1]).toEqual({ op: 'eq', fieldId: 1, value: 42 });
+      expect(andExpr.exprs[0]).toEqual({ op: 'eq', field: 'status', value: 'active' });
+      expect(andExpr.exprs[1]).toEqual({ op: 'eq', field: 'score', value: 42 });
     });
 
     it('should build $gt predicate', () => {
       const filter = FilterBuilder.buildFilter({ score: { $gt: 0.5 } });
-      expect(filter).toEqual({ op: 'gt', fieldId: 0, value: 0.5 });
+      expect(filter).toEqual({ op: 'gt', field: 'score', value: 0.5 });
     });
 
     it('should build $lt predicate', () => {
       const filter = FilterBuilder.buildFilter({ age: { $lt: 30 } });
-      expect(filter).toEqual({ op: 'lt', fieldId: 0, value: 30 });
+      expect(filter).toEqual({ op: 'lt', field: 'age', value: 30 });
     });
 
     it('should build $ne predicate', () => {
       const filter = FilterBuilder.buildFilter({ deleted: { $ne: true } });
-      expect(filter).toEqual({ op: 'ne', fieldId: 0, value: true });
+      expect(filter).toEqual({ op: 'ne', field: 'deleted', value: true });
     });
 
     it('should build $in predicate', () => {
       const filter = FilterBuilder.buildFilter({ type: { $in: ['a', 'b', 'c'] } });
-      expect(filter).toEqual({ op: 'in', fieldId: 0, values: ['a', 'b', 'c'] });
+      expect(filter).toEqual({ op: 'in', field: 'type', values: ['a', 'b', 'c'] });
     });
 
     it('should build $range predicate', () => {
       const filter = FilterBuilder.buildFilter({ score: { $range: [0, 100] } });
-      expect(filter).toEqual({ op: 'range', fieldId: 0, low: 0, high: 100 });
+      // Inclusive bounds: rvf's native range excludes high, so ge+le is emitted.
+      expect(filter).toEqual({
+        op: 'and',
+        exprs: [
+          { op: 'ge', field: 'score', value: 0 },
+          { op: 'le', field: 'score', value: 100 },
+        ],
+      });
     });
 
     it('should build $le and $ge predicates', () => {
       const filter = FilterBuilder.buildFilter({ min: { $ge: 10 }, max: { $le: 50 } });
       expect(filter).not.toBeNull();
       const andExpr = filter as { op: 'and'; exprs: RvfFilterExpr[] };
-      expect(andExpr.exprs[0]).toEqual({ op: 'ge', fieldId: 0, value: 10 });
-      expect(andExpr.exprs[1]).toEqual({ op: 'le', fieldId: 1, value: 50 });
+      expect(andExpr.exprs[0]).toEqual({ op: 'ge', field: 'min', value: 10 });
+      expect(andExpr.exprs[1]).toEqual({ op: 'le', field: 'max', value: 50 });
     });
 
     it('should build $eq predicate explicitly', () => {
       const filter = FilterBuilder.buildFilter({ color: { $eq: 'blue' } });
-      expect(filter).toEqual({ op: 'eq', fieldId: 0, value: 'blue' });
+      expect(filter).toEqual({ op: 'eq', field: 'color', value: 'blue' });
     });
 
     it('should return null for empty predicates', () => {
@@ -263,7 +270,7 @@ describe('ADR-007 Phase 1: RvfBackend Extended APIs', () => {
 
     it('should skip null/undefined values', () => {
       const filter = FilterBuilder.buildFilter({ a: null as unknown as string, b: 'ok' });
-      expect(filter).toEqual({ op: 'eq', fieldId: 0, value: 'ok' });
+      expect(filter).toEqual({ op: 'eq', field: 'b', value: 'ok' });
     });
 
     it('should use fluent builder API', () => {
@@ -285,13 +292,19 @@ describe('ADR-007 Phase 1: RvfBackend Extended APIs', () => {
     it('should support in() operator', () => {
       const builder = new FilterBuilder();
       const filter = builder.in('status', ['a', 'b']).build();
-      expect(filter).toEqual({ op: 'in', fieldId: 0, values: ['a', 'b'] });
+      expect(filter).toEqual({ op: 'in', field: 'status', values: ['a', 'b'] });
     });
 
     it('should support range() operator', () => {
       const builder = new FilterBuilder();
       const filter = builder.range('temp', 20, 30).build();
-      expect(filter).toEqual({ op: 'range', fieldId: 0, low: 20, high: 30 });
+      expect(filter).toEqual({
+        op: 'and',
+        exprs: [
+          { op: 'ge', field: 'temp', value: 20 },
+          { op: 'le', field: 'temp', value: 30 },
+        ],
+      });
     });
 
     it('should assign sequential field IDs', () => {

@@ -326,7 +326,7 @@ describe('ADR-007 Phase 1: FilterBuilder', () => {
       const builder = new FilterBuilder();
       const filter = builder.range('score', 0.0, 1.0).build();
       expect(filter).not.toBeNull();
-      expect(filter!.op).toBe('range');
+      expect(filter!.op).toBe('and'); // inclusive range = ge + le
     });
 
     it('should support NOT wrapper', () => {
@@ -394,7 +394,7 @@ describe('ADR-007 Phase 1: FilterBuilder', () => {
         score: { $range: [0.0, 1.0] },
       });
       expect(filter).not.toBeNull();
-      expect(filter!.op).toBe('range');
+      expect(filter!.op).toBe('and'); // inclusive range = ge + le
     });
 
     it('should return null for empty predicates', () => {

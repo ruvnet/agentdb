@@ -24,6 +24,8 @@ export { RuVectorLearning } from './ruvector/RuVectorLearning.js';
 export { HNSWLibBackend } from './hnswlib/HNSWLibBackend.js';
 // Built-in sql.js RVF backend; `quantizedIndex: 'rabitq'` adds the optional RaBitQ index (ADR-018)
 export { SqlJsRvfBackend } from './rvf/SqlJsRvfBackend.js';
+export { RvfMetadataTypeConflictError, RVF_METADATA_TYPE_CONFLICT } from './rvf/RvfBackend.js';
+export type { RejectedWrite } from './rvf/RvfBackend.js';
 export type { RabitqOptions, RabitqStats } from './rvf/RabitqAccelerator.js';
 
 // Factory and detection

@@ -5,6 +5,27 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0] - 2026-11-06
+
+### Changed
+
+- **`@ruvector/rvf` ^0.4.7** (was ^0.2.3), `@ruvector/rvf-node` ^0.4.2 (was ^0.1.7), `@ruvector/rvf-wasm` ^0.1.7. Still optional and lazy-loaded; without it `createBackend('rvf')` falls back to the sql.js RVF backend. This brings the 0.4.x filtered-recall fix, the #1382 file-growth fix and `forceExact`.
+- **Metadata is stored.** rvf 0.2.3 dropped the `metadata` passed to `RvfBackend.insert`/`insertAsync`/`insertBatchAsync`; 0.4.7 stores it with the vector and search hits carry it, including after reopen. Numbers are stored as f64, objects and arrays as JSON.
+- **Filtered search works.** On 0.2.3 every `searchAsync` with a `filter` threw (`filter requires string field 'valueType'`). `FilterBuilder` now emits leaves as `{ op, field: <name>, value }`, which rvf resolves against the store's own field registry; it no longer emits per-instance numeric `fieldId`s, which never matched that registry. `fieldId()`/`getFieldMap()` remain but are deprecated. `RvfFilterExpr` accepts either `field` or `fieldId` leaves.
+- `$range` / `range()` stay inclusive (`low <= v <= high`). rvf's native `range` excludes `high`, so they are emitted as `and(ge, le)`.
+- A raw `RvfFilterExpr` passed as `SearchOptions.filter` is forwarded unchanged (it was run through the predicate DSL).
+- New `SearchOptions.forceExact`: exact brute-force scan on the RVF backend; other backends ignore it.
+- **Metadata type conflicts throw.** A field keeps the type of its first value; writing another type now throws `RvfMetadataTypeConflictError` (`code` 0xff09, `field`, `ids`) instead of being silently dropped. rvf applies a batch all-or-nothing, so `insertAsync`/`insertBatchAsync` write nothing on a conflict. For queued sync `insert()`s, `flush()` writes the other entries, keeps the conflicting ones with their data in `getRejectedWrites()`/`takeRejectedWrites()`, and throws. Both are exported from `agentdb/backends`.
+- `insertBatchAsync` validates ids, dimensions and metadata like `insert` (prototype-pollution keys are stripped before metadata is persisted).
+- **Locking.** rvf 0.4.x holds a writer lock until close completes. New `closeAsync()` flushes queued writes and resolves once the lock is released. A new `RvfBackend` on a path whose sync `close()` is still in flight waits for it. A second writer gets an error that says the store is locked and points to `closeAsync()`/`openReadonly()`.
+- **Dimension-aware ef floor.** Above 128 dims, queries use `efSearch >= ceil(256 * sqrt(dim / 128))` (384-d: 444). rvf 0.4.7 floors ef at 256 for every dimension; on 5k × 384-d cosine, recall@10 at efSearch 100 was 0.965 and is 0.995 with the floor. This mirrors RuVector #1401, which is not yet in a release. Larger caller values are kept.
+
+### Migration
+
+- Stores written by agentdb 3.6.x / rvf 0.2.3 open and read under 0.4.7: all vectors and string ids are intact (fixture in `tests/fixtures/rvf-0.2.3`), and new writes with metadata and filters work on them. Legacy rows have no metadata, because 0.2.3 never stored it.
+- rvf 0.2.x did not persist the distance metric, so a 0.2.x store reopens as L2 (squared) under 0.2.3 itself and under 0.4.7. For unit-normalized embeddings the ranking is the same as cosine, but `distance`/`similarity` values and `threshold` filters differ. To get cosine back, re-ingest into a new store; stores created with rvf 0.4.x keep their metric.
+- A store opened for writing by 0.4.7 may not be readable by 0.2.x again.
+
 ## [3.6.1] - 2026-11-06
 
 ### Fixed

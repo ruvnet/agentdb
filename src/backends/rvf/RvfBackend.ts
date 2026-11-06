@@ -7,7 +7,9 @@
  * Features:
  * - Single-file .rvf persistence with crash safety
  * - Native async API with sync compatibility layer
- * - Typed metadata filter expressions (11 operators)
+ * - Durable per-vector metadata (@ruvector/rvf >= 0.4.7), returned on hits
+ * - Typed metadata filter expressions (11 operators), fields referenced by name
+ * - forceExact brute-force queries
  * - Lineage tracking (fileId, parentId, derive)
  * - COW branching for agent experiments
  * - Progressive indexing (3-layer HNSW quality tiers)
@@ -89,6 +91,74 @@ function toWitnessVerification(raw: any): WitnessVerification {
   };
 }
 
+/** rvf error code: a metadata value's type differs from the field's stored type */
+export const RVF_METADATA_TYPE_CONFLICT = 0xff09;
+/** rvf error code: another writer holds the store lock */
+export const RVF_LOCK_HELD = 0x0300;
+
+type IngestItem = { id: string; vector: Float32Array; metadata?: Record<string, unknown> };
+
+/**
+ * Thrown when rvf rejects a write because a metadata value's type differs
+ * from the type already stored for that field (rvf 0xff09). rvf applies a
+ * batch all-or-nothing, so none of `ids` were written. Nothing is dropped:
+ * async callers still hold their data, and queued sync writes that conflict
+ * are kept in RvfBackend.getRejectedWrites().
+ */
+export class RvfMetadataTypeConflictError extends Error {
+  readonly code = RVF_METADATA_TYPE_CONFLICT;
+  /** The conflicting field, when rvf names it */
+  readonly field?: string;
+  /** Ids of the entries that were not written */
+  readonly ids: string[];
+  readonly cause: unknown;
+
+  constructor(ids: string[], cause: unknown) {
+    const detail = (cause as Error)?.message ?? String(cause);
+    const field = /field "([^"]+)"/.exec(detail)?.[1];
+    super(
+      `Metadata type conflict${field ? ` on field "${field}"` : ''} for ${ids.length} entr${ids.length === 1 ? 'y' : 'ies'} ` +
+      `(${ids.slice(0, 5).join(', ')}${ids.length > 5 ? ', ...' : ''}); nothing was written. ` +
+      `A field keeps the type of its first value (numbers are f64, objects/arrays JSON). rvf: ${detail}`,
+    );
+    this.name = 'RvfMetadataTypeConflictError';
+    this.field = field;
+    this.ids = ids;
+    this.cause = cause;
+  }
+}
+
+/** A queued write rvf rejected; kept with its data so it is not lost */
+export interface RejectedWrite extends IngestItem {
+  error: RvfMetadataTypeConflictError;
+}
+
+function errorCode(err: unknown): number | undefined {
+  const code = (err as { code?: unknown })?.code;
+  return typeof code === 'number' ? code : undefined;
+}
+
+function isTypeConflict(err: unknown): boolean {
+  return errorCode(err) === RVF_METADATA_TYPE_CONFLICT ||
+    /MetadataTypeConflict|0xff09|does not match the type already stored/i.test((err as Error)?.message ?? '');
+}
+
+function isLockHeld(err: unknown): boolean {
+  return errorCode(err) === RVF_LOCK_HELD || /LockHeld|0x0300/.test((err as Error)?.message ?? '');
+}
+
+/**
+ * Closes started by the sync close() that have not settled yet, by path.
+ * rvf 0.4.x holds a writer lock until close() resolves, so an open of the
+ * same path waits for these first.
+ */
+const pendingCloses = new Map<string, Promise<void>>();
+
+async function awaitPendingClose(path: string): Promise<void> {
+  const p = pendingCloses.get(path);
+  if (p) await p;
+}
+
 /** Performance statistics */
 interface PerfStats {
   insertCount: number;
@@ -115,7 +185,8 @@ export class RvfBackend implements VectorBackendAsync {
   private storagePath: string;
 
   // Sync insert queue: buffers sync insert() calls, flushed on threshold or explicit flush()
-  private pending: Array<{ id: string; vector: Float32Array; metadata?: Record<string, unknown> }> = [];
+  private pending: IngestItem[] = [];
+  private rejected: RejectedWrite[] = [];
   private flushChain: Promise<void> = Promise.resolve();
   private batchThreshold: number;
 
@@ -158,8 +229,21 @@ export class RvfBackend implements VectorBackendAsync {
       validatePath(storagePath);
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let RvfDatabase: any;
     try {
-      const { RvfDatabase } = await import('@ruvector/rvf');
+      ({ RvfDatabase } = await import('@ruvector/rvf'));
+    } catch (error) {
+      throw new Error(
+        `RVF backend initialization failed.\n` +
+        `Install with: npm install @ruvector/rvf\n` +
+        `Error: ${(error as Error).message}`,
+      );
+    }
+
+    await awaitPendingClose(storagePath);
+
+    try {
       const rvfBackendType = this.config.rvfBackend ?? 'auto';
 
       // Map AgentDB metric names to RVF metric names
@@ -197,12 +281,7 @@ export class RvfBackend implements VectorBackendAsync {
 
       this.initialized = true;
     } catch (error) {
-      const msg = (error as Error).message;
-      throw new Error(
-        `RVF backend initialization failed.\n` +
-        `Install with: npm install @ruvector/rvf\n` +
-        `Error: ${msg}`,
-      );
+      throw openError(storagePath, error);
     }
   }
 
@@ -283,24 +362,69 @@ export class RvfBackend implements VectorBackendAsync {
     const rvfBackendType = this.config.rvfBackend ?? 'auto';
     if (this.db) {
       await this.db.close();
+      this.db = null;
     }
-    this.db = await RvfDatabase.open(path, rvfBackendType);
+    await awaitPendingClose(path);
+    try {
+      this.db = await RvfDatabase.open(path, rvfBackendType);
+    } catch (error) {
+      this.initialized = false;
+      throw openError(path, error);
+    }
     const status = await this.db.status();
     this.cachedCount = status.totalVectors ?? 0;
     this.storagePath = path;
     this.initialized = true;
   }
 
+  /**
+   * Release the handle without waiting. Queued sync writes that were not
+   * flushed are discarded; use closeAsync() to flush them and to know when
+   * the writer lock is released. A later open of the same path through
+   * RvfBackend waits for this close to finish.
+   */
   close(): void {
     if (this.db) {
-      this.db.close().catch((err: Error) => {
+      const path = this.storagePath;
+      const p: Promise<void> = this.db.close().catch((err: Error) => {
         console.warn('[RvfBackend] Close error:', err.message);
+      }).finally(() => {
+        if (pendingCloses.get(path) === p) pendingCloses.delete(path);
       });
+      pendingCloses.set(path, p);
       this.db = null;
     }
     this.pending = [];
     this.initialized = false;
     this.cachedCount = 0;
+  }
+
+  /**
+   * Flush queued writes, then close and release the writer lock.
+   * If the flush fails the store stays open so the caller can retry.
+   */
+  async closeAsync(): Promise<void> {
+    if (this.db) {
+      await this.flush();
+      const db = this.db;
+      this.db = null;
+      await db.close();
+    }
+    this.pending = [];
+    this.initialized = false;
+    this.cachedCount = 0;
+  }
+
+  /** Queued writes rvf rejected for a metadata type conflict (data kept) */
+  getRejectedWrites(): ReadonlyArray<RejectedWrite> {
+    return this.rejected;
+  }
+
+  /** Remove and return the rejected writes, e.g. to fix and re-insert them */
+  takeRejectedWrites(): RejectedWrite[] {
+    const out = this.rejected;
+    this.rejected = [];
+    return out;
   }
 
   // ─── Async VectorBackendAsync interface (native RVF operations) ───
@@ -313,12 +437,11 @@ export class RvfBackend implements VectorBackendAsync {
     }
     const start = this.config.enableStats !== false ? performance.now() : 0;
 
-    await this.db.ingestBatch([{
+    this.cachedCount += await this.ingest([{
       id,
       vector: embedding instanceof Float32Array ? embedding : new Float32Array(embedding),
       metadata: validateMetadata(metadata),
     }]);
-    this.cachedCount++;
 
     if (this.config.enableStats !== false) {
       this.stats.insertCount++;
@@ -339,16 +462,21 @@ export class RvfBackend implements VectorBackendAsync {
 
     const start = this.config.enableStats !== false ? performance.now() : 0;
 
-    const entries = items.map((item) => ({
-      id: item.id,
-      vector: item.embedding instanceof Float32Array
-        ? item.embedding
-        : new Float32Array(item.embedding),
-      metadata: item.metadata,
-    }));
+    const entries = items.map((item) => {
+      validateId(item.id);
+      if (item.embedding.length !== this.dim) {
+        throw new Error(`Vector dimension ${item.embedding.length} does not match expected ${this.dim}`);
+      }
+      return {
+        id: item.id,
+        vector: item.embedding instanceof Float32Array
+          ? item.embedding
+          : new Float32Array(item.embedding),
+        metadata: validateMetadata(item.metadata),
+      };
+    });
 
-    const result = await this.db.ingestBatch(entries);
-    this.cachedCount += result.accepted ?? items.length;
+    this.cachedCount += await this.ingest(entries);
 
     if (this.config.enableStats !== false) {
       this.stats.insertCount += items.length;
@@ -375,11 +503,14 @@ export class RvfBackend implements VectorBackendAsync {
     const start = this.config.enableStats !== false ? performance.now() : 0;
 
     const rvfOpts: Record<string, unknown> = {};
-    if (options?.efSearch) rvfOpts.efSearch = options.efSearch;
+    const ef = effectiveEfSearch(this.dim, options?.efSearch);
+    if (ef) rvfOpts.efSearch = ef;
     if (options?.threshold) rvfOpts.minScore = options.threshold;
-    // Wire filter expressions through to RVF query options
+    if (options?.forceExact) rvfOpts.forceExact = true;
+    // Wire filter expressions through to RVF query options. A raw
+    // RvfFilterExpr (has `op`) passes as-is; a predicate object is built.
     if (options?.filter && typeof options.filter === 'object') {
-      const builtFilter = FilterBuilder.buildFilter(options.filter as Parameters<typeof FilterBuilder.buildFilter>[0]);
+      const builtFilter = toRvfFilter(options.filter);
       if (builtFilter) rvfOpts.filter = builtFilter;
     }
     const results = await this.db.query(queryVec, safeK, Object.keys(rvfOpts).length > 0 ? rvfOpts : undefined);
@@ -447,20 +578,56 @@ export class RvfBackend implements VectorBackendAsync {
     this.ensureInitialized();
 
     const queue = this.pending;
+    const conflicts: RejectedWrite[] = [];
     while (queue.length > 0 && this.pending === queue) {
       const chunk = queue.slice(0, MAX_BATCH_SIZE);
-      const result = await this.db.ingestBatch(chunk.map((item) => ({
-        id: item.id,
-        vector: item.vector,
-        metadata: item.metadata,
-      })));
+      let accepted: number;
+      try {
+        accepted = await this.ingest(chunk);
+      } catch (err) {
+        if (!(err instanceof RvfMetadataTypeConflictError)) throw err;
+        // rvf rejects the whole batch; retry item by item so one bad entry
+        // does not block the rest, and park the conflicting ones with their data.
+        accepted = 0;
+        for (const item of chunk) {
+          if (this.pending !== queue) break;
+          try {
+            accepted += await this.ingest([item]);
+          } catch (itemErr) {
+            if (!(itemErr instanceof RvfMetadataTypeConflictError)) throw itemErr;
+            conflicts.push({ ...item, error: itemErr });
+          }
+        }
+      }
       // close() replaces the queue; don't splice the new one.
       if (this.pending !== queue) break;
       queue.splice(0, chunk.length);
-      this.cachedCount += result.accepted ?? chunk.length;
+      this.cachedCount += accepted;
     }
 
     this.stats.flushCount++;
+    if (conflicts.length > 0) {
+      this.rejected.push(...conflicts);
+      const first = conflicts[0].error;
+      throw new RvfMetadataTypeConflictError(conflicts.map((c) => c.id), first.cause);
+    }
+  }
+
+  /** ingestBatch with rvf type conflicts mapped to RvfMetadataTypeConflictError */
+  private async ingest(entries: IngestItem[]): Promise<number> {
+    try {
+      const result = await this.db.ingestBatch(entries.map((e) => ({
+        id: e.id,
+        vector: e.vector,
+        metadata: e.metadata,
+      })));
+      return result?.accepted ?? entries.length;
+    } catch (err) {
+      if (isTypeConflict(err)) {
+        throw new RvfMetadataTypeConflictError(entries.map((e) => e.id), err);
+      }
+      throw err;
+    }
   }
 
   // ─── RVF-specific extensions ───
@@ -666,6 +833,7 @@ export class RvfBackend implements VectorBackendAsync {
 
     const { RvfDatabase } = await import('@ruvector/rvf');
     const backendType = config?.rvfBackend ?? 'auto';
+    await awaitPendingClose(path);
     const db = await RvfDatabase.openReadonly(path, backendType);
 
     // Probe dimension from the store
@@ -704,12 +872,7 @@ export class RvfBackend implements VectorBackendAsync {
     this.ensureInitialized();
 
     // Accept either a raw RvfFilterExpr or a predicate DSL object
-    let rvfFilter: RvfFilterExpr | null;
-    if ('op' in filter) {
-      rvfFilter = filter as RvfFilterExpr;
-    } else {
-      rvfFilter = FilterBuilder.buildFilter(filter as Parameters<typeof FilterBuilder.buildFilter>[0]);
-    }
+    const rvfFilter = toRvfFilter(filter);
 
     if (!rvfFilter) {
       throw new Error('Cannot build filter expression from provided predicates');
@@ -807,4 +970,41 @@ export class RvfBackend implements VectorBackendAsync {
       throw new Error('RvfBackend not initialized. Call initialize() first.');
     }
   }
+}
+
+/**
+ * Dimension-aware ef_search floor: 256 up to 128 dims, then 256*sqrt(dim/128)
+ * (384-d -> 444). rvf 0.4.7 floors ef at 256 for every dimension, which costs
+ * recall at higher dimensions (5k x 384-d cosine, k=10: 0.965 at ef 100,
+ * 0.995 at ef 444). Mirrors RuVector #1401; a no-op once rvf ships it.
+ * Larger caller values are kept.
+ */
+export function minEfSearch(dim: number): number {
+  if (dim <= 128) return 256;
+  return Math.min(65535, Math.ceil(256 * Math.sqrt(dim / 128)));
+}
+
+function effectiveEfSearch(dim: number, requested?: number): number | undefined {
+  if (dim <= 128) return requested || undefined;
+  return Math.max(requested || 0, minEfSearch(dim));
+}
+
+/** A raw RvfFilterExpr (has `op`) passes through; a predicate object is built. */
+function toRvfFilter(filter: RvfFilterExpr | Record<string, unknown>): RvfFilterExpr | null {
+  if (typeof (filter as { op?: unknown }).op === 'string') return filter as RvfFilterExpr;
+  return FilterBuilder.buildFilter(filter as Parameters<typeof FilterBuilder.buildFilter>[0]);
+}
+
+/** Map an rvf open/create failure to an error that says what to do */
+function openError(path: string, error: unknown): Error {
+  const msg = (error as Error)?.message ?? String(error);
+  const wrapped = isLockHeld(error)
+    ? new Error(
+      `RVF store "${path}" is locked by another writer (rvf LockHeld). Close the other ` +
+      `handle (await closeAsync()) or open it with RvfBackend.openReadonly(). rvf: ${msg}`,
+    )
+    : new Error(`RVF backend initialization failed for "${path}": ${msg}`);
+  (wrapped as Error & { code?: number; cause?: unknown }).code = errorCode(error);
+  (wrapped as Error & { cause?: unknown }).cause = error;
+  return wrapped;
 }
