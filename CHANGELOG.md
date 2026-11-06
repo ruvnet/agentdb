@@ -5,6 +5,44 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-11-05
+
+Dependency floor release. agentdb is a dependency of agentic-flow and ruflo, so its ranges decide what the ecosystem installs.
+
+### Breaking
+
+- **Node.js 20.9.0 or newer** (`engines.node`, `agentdb doctor`). Node 18 is end of life, and sharp 0.35.5 (the GHSA-wq5f-xc86-pv6w fix, reached through `@huggingface/transformers`) and better-sqlite3 12 refuse it (#35).
+- **`@ruvector/ruvllm` ^4.1.0** (was ^2.5.1). 4.1.0 is the restored runtime; 4.0.0 and 4.0.1 were a wrong-repository publish and are excluded. RuvLLM 4 throws `RUVLLM_NO_LANGUAGE_MODEL` from `query()`/`generate()` when no model is loaded instead of returning placeholder text, so `LLMRouter` uses ruvllm for text generation only when `isModelLoaded()`; embeddings, similarity and memory still use it.
+
+### Added
+
+- `SparsificationService` and `MincutService` accept `GraphInput`: the adjacency array, or an object keyed by node id (`{ 0: [1, 2] }`) as the docs showed. `normalizeGraphEdges()` converts and validates it.
+- `tests/unit/integrations/ruvllm-api.test.ts` requires the real `@ruvector/ruvllm` and asserts the installed version and every symbol agentdb calls.
+- CI job that installs with `--omit=optional` and type-checks.
+
+### Changed
+
+- `@ruvector/attention` ^2.2.3 (was ^0.1.2, which already resolved 0.1.32 on fresh installs; that release aborts Node on a Rust panic, 2.2.3 throws). `@ruvector/graph-node` ^2.1.2 (Cypher depth fix). `better-sqlite3` ^12.8.0: 11.x has no Node 24 prebuild and its local builds abort when a statement is garbage-collected on Node 24.19+ (#29). `semver` is now a declared dependency.
+- `@ruvector/rvf` stays ^0.2.3. rvf 0.4 can open a 0.2 store, but its first write makes the file unreadable to 0.2/0.3, and its SDK rejects per-vector metadata. Moving to it needs a migration path (back up `.rvf` and `.rvf.idmap.json`), so it is left for a dedicated release.
+- The TypeScript build no longer depends on optional dependencies' type declarations (`src/types/optional-modules.d.ts`); a failed optional install no longer fails `tsc` with TS2307.
+
+### Fixed
+
+- `LLMRouter`: `getEmbedding()` always returned an empty vector (`embedding.values` on an array is `Array.prototype.values`); ruvllm response text was read from fields that do not exist; feedback used a shape ruvllm rejects.
+- `FederatedSessionManager`: LoRA adapters ignored the configured dimension and were 256 x 256, so `applyLora()` changed the embedding length.
+- `NativeAccelerator.ewcUpdateFisher()` called a method ruvllm never had and always returned false; it now registers the weights with `EwcManager.registerTask()`. Native tensor compression works with `@ruvector/gnn` 0.1.25 (`TensorCompress`).
+- `SemanticQueryRouter`: with `@ruvector/router` 0.1.32 (which now loads natively), a threshold of 0 became 0.7 and dropped matches.
+- `AttentionService` never reached the native `@ruvector/attention` classes from ESM (they sit on `default`), and called the removed `computeRaw`.
+- `reasoning_patterns` gains the `context` and `outcome` columns `BatchOperations.insertPatterns` writes, with a migration for existing databases; `agentdb_pattern_store_batch` always failed (#17, fixes #16).
+- `getRecentEpisodes` returned episodes stored in the same second in arbitrary order.
+- Multi-head attention with fewer dimensions than heads produced all-zero heads.
+- Importing `agentdb/cli` ran the CLI and exited the host process.
+- CLI `vector-search` ignored its database path and decoded 384-dim embeddings as 1536 bytes; `import` dropped embeddings written by `export`.
+- The SQL validator accepts `table_info` only as `table_info(identifier)`.
+- `HNSWLibBackend` did not await hnswlib-node 3's async index read/write, refused to re-insert a removed id, and recorded sub-millisecond searches as 0 ms. `HNSWIndex.search` threw when k exceeded the index size; k is now capped.
+- `agentdb init` from a source checkout looked for schema files that only exist in the built package and created a database without the `episodes` table; it now uses the inlined schemas.
+- Test suite: 38 sparsification tests passed object graphs to the array API; other suites used config keys, controllers and imports (`@jest/globals`) that do not exist. Plugin and real-browser suites are excluded from the default vitest run.
+
 ## [3.4.0] - 2026-11-05
 
 Ecosystem integrations (docs/adrs/ADR-018). Native ruvector packages now back code paths that previously probed for packages that do not exist. No API removals.

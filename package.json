@@ -1,6 +1,6 @@
 {
   "name": "agentdb",
-  "version": "3.4.0",
+  "version": "3.5.0",
   "description": "Self-learning vector memory for AI agents — single-file .rvf cognitive container with HNSW search, episodic Reflexion memory, causal graph + Cypher, 9 RL algorithms, Thompson Sampling bandit, 41 MCP tools, hybrid (BM25 + dense) retrieval, GNN attention. 150x faster than SQLite. Up to +36% search quality from feedback. Runs in Node, browsers (WASM), edge, offline. Backs the agentic-flow / ruflo / Claude Code memory layer.",
   "type": "module",
   "main": "dist/src/index.js",
@@ -166,6 +166,7 @@
     "@modelcontextprotocol/sdk": "^1.20.1",
     "@opentelemetry/api": "^1.9.0",
     "ajv": "^8.18.0",
+    "semver": "^7.7.0",
     "sql.js": "^1.13.0"
   },
   "devDependencies": {
@@ -181,7 +182,7 @@
     "vitest": "^4.0.15"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.9.0"
   },
   "files": [
     "dist/src/",
@@ -196,14 +197,14 @@
     "@opentelemetry/resources": "^2.8.0",
     "@opentelemetry/sdk-node": "^0.220.0",
     "@opentelemetry/semantic-conventions": "^1.25.0",
-    "@ruvector/attention": "^0.1.2",
+    "@ruvector/attention": "^2.2.3",
     "@ruvector/gnn": "^0.1.23",
-    "@ruvector/graph-node": "^2.0.2",
+    "@ruvector/graph-node": "^2.1.2",
     "@ruvector/graph-transformer": "^2.0.4",
     "@ruvector/mincut-wasm": "^2.3.0",
     "@ruvector/rabitq-wasm": "^0.1.2",
     "@ruvector/router": "^0.1.15",
-    "@ruvector/ruvllm": "^2.5.1",
+    "@ruvector/ruvllm": "^4.1.0",
     "@ruvector/rvf": "^0.2.3",
     "@ruvector/rvf-node": "^0.1.7",
     "@ruvector/rvf-solver": "^0.1.7",
@@ -211,7 +212,7 @@
     "@ruvector/sona": "^0.1.4",
     "aidefence": "^3.0.1",
     "argon2": "^0.44.0",
-    "better-sqlite3": "^11.8.1",
+    "better-sqlite3": "^12.8.0",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "hnswlib-node": "^3.0.0",

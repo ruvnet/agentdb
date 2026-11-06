@@ -71,8 +71,11 @@ describe('ADR-007 Phase 1: Router Persistence', () => {
       expect(saved).toBe(true);
 
       // Verify JSON file was written
+      // Written by @ruvector/router's own save() when the native router loads
+      // ({ dimension, intents[].embedding }), else by the JSON fallback
+      // ({ dim, intents[].centroid }).
       const content = JSON.parse(await fs.readFile(tmpFile, 'utf-8'));
-      expect(content.dim).toBe(4);
+      expect(content.dim ?? content.dimension).toBe(4);
       expect(content.threshold).toBe(0.1);
       expect(content.intents).toHaveLength(2);
       expect(content.intents[0].name).toBe('greeting');
@@ -572,10 +575,12 @@ describe('Router persistence edge cases', () => {
     });
     await router.save(tmpFile);
 
+    // Native router files store the vector as `embedding`, the fallback as `centroid`.
     const raw = JSON.parse(await fs.readFile(tmpFile, 'utf-8'));
-    expect(Array.isArray(raw.intents[0].centroid)).toBe(true);
-    expect(raw.intents[0].centroid[0]).toBeCloseTo(0.25);
-    expect(raw.intents[0].centroid[3]).toBeCloseTo(1.0);
+    const vector = raw.intents[0].centroid ?? raw.intents[0].embedding;
+    expect(Array.isArray(vector)).toBe(true);
+    expect(vector[0]).toBeCloseTo(0.25);
+    expect(vector[3]).toBeCloseTo(1.0);
 
     router.destroy();
   });

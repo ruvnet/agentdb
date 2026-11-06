@@ -500,6 +500,8 @@ describe('HNSW Backend Tests', () => {
         persistIndex: true,
         indexPath,
       });
+      // Persisted indexes load lazily; initialize() performs the load.
+      await index2.initialize();
 
       const stats2 = index2.getStats();
 

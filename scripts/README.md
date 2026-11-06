@@ -150,7 +150,7 @@ This directory contains build, validation, and deployment scripts for AgentDB v2
 **Target:** v2.0.0 with full backward compatibility
 
 All scripts are designed to work with:
-- **Node.js:** >=18.0.0
+- **Node.js:** >=20.9.0
 - **TypeScript:** ^5.7.2
 - **Better-sqlite3:** ^11.8.1 (optional)
 - **@ruvector/core:** ^0.1.15
@@ -189,7 +189,7 @@ bash scripts/npm-release.sh major  # Major release
 ## Script Dependencies
 
 ### Required Global Tools
-- `node` (>=18.0.0)
+- `node` (>=20.9.0)
 - `npm` (>=9.0.0)
 - `bash` (>=4.0)
 - `tsx` (for TypeScript scripts)

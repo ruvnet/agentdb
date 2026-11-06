@@ -9,7 +9,7 @@
  * - Graph query security
  */
 
-import { describe, it, expect, beforeEach } from '@jest/globals';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   validateVector,
   validateVectorId,

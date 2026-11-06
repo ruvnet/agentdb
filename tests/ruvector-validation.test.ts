@@ -35,9 +35,10 @@ afterAll(() => {
 
 describe('RuVector Core (@ruvector/core) - Vector Database', () => {
   it('should load native bindings (not WASM)', async () => {
-    const { VectorDB, version, hello } = await import('@ruvector/core');
+    // @ruvector/core exports VectorDb (its .d.ts claims a VectorDB alias the binary lacks)
+    const { VectorDb, version, hello } = await import('@ruvector/core');
 
-    expect(VectorDB).toBeDefined();
+    expect(VectorDb).toBeDefined();
     expect(typeof version).toBe('function');
     expect(typeof hello).toBe('function');
 
@@ -52,9 +53,9 @@ describe('RuVector Core (@ruvector/core) - Vector Database', () => {
   });
 
   it('should create vector database with HNSW indexing', async () => {
-    const { VectorDB, DistanceMetric } = await import('@ruvector/core');
+    const { VectorDb, JsDistanceMetric: DistanceMetric } = await import('@ruvector/core');
 
-    const db = new VectorDB({
+    const db = new VectorDb({
       dimensions: 128,
       distanceMetric: DistanceMetric.Cosine,
       storagePath: VECTOR_DB_PATH,
@@ -73,9 +74,9 @@ describe('RuVector Core (@ruvector/core) - Vector Database', () => {
   });
 
   it('should insert and search vectors with persistence', async () => {
-    const { VectorDB, DistanceMetric } = await import('@ruvector/core');
+    const { VectorDb, JsDistanceMetric: DistanceMetric } = await import('@ruvector/core');
 
-    const db = new VectorDB({
+    const db = new VectorDb({
       dimensions: 128,
       distanceMetric: DistanceMetric.Cosine,
       storagePath: VECTOR_DB_PATH
@@ -114,9 +115,9 @@ describe('RuVector Core (@ruvector/core) - Vector Database', () => {
   });
 
   it('should support batch operations', async () => {
-    const { VectorDB, DistanceMetric } = await import('@ruvector/core');
+    const { VectorDb, JsDistanceMetric: DistanceMetric } = await import('@ruvector/core');
 
-    const db = new VectorDB({
+    const db = new VectorDb({
       dimensions: 64,
       distanceMetric: DistanceMetric.Cosine
     });

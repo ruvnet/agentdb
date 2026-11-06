@@ -1,7 +1,7 @@
 # AgentDB Simulation Quick Start Guide
 
 **Reading Time**: 5 minutes
-**Prerequisites**: Node.js 18+, npm or yarn
+**Prerequisites**: Node.js 20.9.0+, npm or yarn
 **Target Audience**: New users
 
 Get up and running with AgentDB simulations in 5 minutes. This guide covers installation, running your first simulation, and understanding the results.

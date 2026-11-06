@@ -11,7 +11,7 @@ Welcome to AgentDB's attention mechanisms! This tutorial will guide you through 
 
 ## Prerequisites
 
-- Node.js 18+ or modern browser
+- Node.js 20.9.0+ or modern browser
 - Basic understanding of embeddings/vectors
 - TypeScript recommended but not required
 

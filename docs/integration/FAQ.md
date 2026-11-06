@@ -62,7 +62,7 @@ Real-world benchmarks:
 
 WASM works in:
 
-- ✅ Node.js 18+
+- ✅ Node.js 20.9.0+
 - ✅ Modern browsers (Chrome, Firefox, Safari, Edge)
 - ✅ Electron apps
 - ✅ React Native (with WASM support)
@@ -509,7 +509,7 @@ function App() {
 ### What are the system requirements?
 
 **Minimum:**
-- Node.js 18+
+- Node.js 20.9.0+
 - 512 MB RAM
 - Modern CPU with SIMD support
 

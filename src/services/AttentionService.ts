@@ -102,7 +102,10 @@ async function loadNapiModule(): Promise<boolean> {
 
   try {
     // Dynamic import for NAPI module
-    napiModule = await import('@ruvector/attention');
+    // 0.1.32+ and 2.x end index.js with module.exports = require(<platform pkg>),
+    // so an ESM import only sees { default }; the classes live on default.
+    const mod: any = await import('@ruvector/attention');
+    napiModule = mod.default ?? mod;
     napiInitialized = true;
     if (PERFORMANCE_LOGGING) {
       console.error('[AttentionService] NAPI module loaded successfully');
@@ -375,7 +378,7 @@ export class AttentionService {
 
         for (let q = 0; q < numQueries; q++) {
           const query = queries.slice(q * dim, (q + 1) * dim);
-          const result = attention.computeRaw(query, keysArray, valuesArray);
+          const result = attention.compute(query, keysArray, valuesArray);
           attended.set(result, q * dim);
 
           // Approximate weights based on hierarchy
@@ -523,7 +526,7 @@ export class AttentionService {
 
         for (let q = 0; q < numQueries; q++) {
           const query = queries.slice(q * dim, (q + 1) * dim);
-          const result = attention.computeRaw(query, keysArray, valuesArray);
+          const result = attention.compute(query, keysArray, valuesArray);
           output.set(result, q * dim);
           blocksProcessed += Math.ceil(numKeys / blockSize);
         }
@@ -645,7 +648,10 @@ export class AttentionService {
     await loadNapiModule();
     if (napiInitialized && napiModule?.GraphRoPeAttention) {
       try {
-        const rope = new napiModule.GraphRoPeAttention(dim, maxPosition);
+        // 2.x takes an options object; .simple(dim, maxPosition) keeps the positional form.
+        const rope = napiModule.GraphRoPeAttention.simple
+          ? napiModule.GraphRoPeAttention.simple(dim, maxPosition)
+          : new napiModule.GraphRoPeAttention(dim, maxPosition);
 
         // The GraphRoPeAttention is an attention mechanism, not just encoding
         // We use it to compute position-aware attention, then extract the patterns
@@ -668,7 +674,7 @@ export class AttentionService {
         // Compute hop-aware encodings using the attention mechanism
         for (let q = 0; q < numQueries; q++) {
           const query = queries.slice(q * dim, (q + 1) * dim);
-          const result = rope.computeRaw(query, keysArray, valuesArray);
+          const result = rope.compute(query, keysArray, valuesArray);
 
           // The result gives us position-encoded output
           // Extract encoding strength from the result
@@ -809,7 +815,7 @@ export class AttentionService {
 
         for (let q = 0; q < numQueries; q++) {
           const query = queries.slice(q * dim, (q + 1) * dim);
-          const result = moe.computeRaw(query, keysArray, valuesArray);
+          const result = moe.compute(query, keysArray, valuesArray);
           output.set(result, q * dim);
 
           // Compute expert assignments based on domain distribution

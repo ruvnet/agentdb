@@ -171,7 +171,9 @@ describe('ReflexionMemory', () => {
       expect(episodes[0]).toHaveProperty('id');
       expect(episodes[0]).toHaveProperty('task');
       expect(episodes[0]).toHaveProperty('similarity');
-      expect(episodes[0].similarity).toBeGreaterThanOrEqual(0);
+      // Cosine similarity: retrieveRelevant is pure top-k with no threshold, so a
+      // signed embedding (the mock is sin/cos-based) can score below zero.
+      expect(episodes[0].similarity).toBeGreaterThanOrEqual(-1);
       expect(episodes[0].similarity).toBeLessThanOrEqual(1);
     });
 
@@ -299,6 +301,9 @@ describe('ReflexionMemory', () => {
     });
 
     it('should return message when no failures found', async () => {
+      // retrieveRelevant is top-k with no similarity cutoff, so an unrelated task
+      // still returns the seeded failures; the empty branch needs no failures at all.
+      db.exec('DELETE FROM episodes');
       const summary = await reflexion.getCritiqueSummary({
         task: 'completely unknown task',
         onlyFailures: true,
@@ -338,6 +343,8 @@ describe('ReflexionMemory', () => {
     });
 
     it('should return message when no successes found', async () => {
+      // See above: no similarity cutoff, so remove the seeded successes.
+      db.exec('DELETE FROM episodes');
       const strategies = await reflexion.getSuccessStrategies({
         task: 'unknown task',
         minReward: 0.9,

@@ -12,6 +12,13 @@
 export type GraphEdges = Array<number[] | undefined>;
 
 /**
+ * Graph input accepted by SparsificationService and MincutService: the
+ * canonical adjacency array, or an object keyed by node id
+ * (`{ 0: [1, 2], 1: [0] }`). Objects are converted with normalizeGraphEdges.
+ */
+export type GraphInput = GraphEdges | Readonly<Record<number, readonly number[] | undefined>>;
+
+/**
  * Graph node representation
  */
 export interface GraphNode {

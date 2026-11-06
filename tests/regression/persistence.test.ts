@@ -63,7 +63,7 @@ describe('Persistence and Data Migration', () => {
     // Initialize embedder
     embedder = new EmbeddingService({
       model: 'mock-model',
-      dimensions: 384,
+      dimension: 384,
       provider: 'local',
     });
     await embedder.initialize();
@@ -454,20 +454,25 @@ describe('Persistence and Data Migration', () => {
 
       db.close();
 
-      // Corrupt the database file
+      // Corrupt the database file header ("SQLite format 3\0" magic)
       const dbBuffer = fs.readFileSync(TEST_DB_PATH);
       const corrupted = Buffer.from(dbBuffer);
-      // Overwrite some bytes in the middle
-      corrupted.write('CORRUPTED', 1000);
+      corrupted.write('CORRUPTED', 0);
       fs.writeFileSync(TEST_DB_PATH, corrupted);
 
-      // Attempt to reopen - should fail gracefully
+      // SQLite opens lazily, so the corruption surfaces on first access:
+      // it must raise a catchable error rather than crash or return garbage.
+      db = new Database(TEST_DB_PATH);
       expect(() => {
-        db = new Database(TEST_DB_PATH);
-      }).toThrow();
+        db.prepare('SELECT COUNT(*) FROM reasoning_patterns').get();
+      }).toThrow(/not a database|malformed/i);
     });
 
     it('should verify database schema integrity', () => {
+      // reasoning_patterns / pattern_embeddings are owned by ReasoningBank,
+      // which creates them on construction (they are not in schema.sql).
+      new ReasoningBank(db, embedder);
+
       const tables = db.prepare(`
         SELECT name FROM sqlite_master
         WHERE type='table'

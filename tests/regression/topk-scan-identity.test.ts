@@ -107,7 +107,9 @@ describe('ReflexionMemory SQL scan', () => {
 
     const memory = new ReflexionMemory(db as any, embedder);
     const convert = vi.spyOn(ReflexionMemory.prototype as any, 'convertDatabaseEpisode');
-    const got = await memory.retrieveRelevant({ task: 'q', k: K });
+    // Dense-only: hybrid retrieval (default since ADR-016) widens the dense
+    // pool to max(4k, 50) before BM25 fusion, which is not the scan under test.
+    const got = await memory.retrieveRelevant({ task: 'q', k: K, hybrid: false });
 
     expect(got.map((e) => ({ id: e.id, similarity: e.similarity }))).toEqual(reference);
     expect(convert).toHaveBeenCalledTimes(K);

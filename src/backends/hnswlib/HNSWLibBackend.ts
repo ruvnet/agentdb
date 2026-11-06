@@ -135,8 +135,15 @@ export class HNSWLibBackend implements VectorBackend {
     }
 
     // Check if ID already exists
-    if (this.idToLabel.has(id)) {
-      throw new Error(`Vector with ID '${id}' already exists`);
+    const staleLabel = this.idToLabel.get(id);
+    if (staleLabel !== undefined) {
+      if (!this.deletedIds.has(id)) {
+        throw new Error(`Vector with ID '${id}' already exists`);
+      }
+      // Re-inserting a removed ID: retire its old label so search can never
+      // map the old vector back to this ID.
+      this.labelToId.delete(staleLabel);
+      this.index.markDelete(staleLabel);
     }
 
     // Allocate numeric label
@@ -282,7 +289,7 @@ export class HNSWLibBackend implements VectorBackend {
       }
 
       // Save HNSW index
-      this.index.writeIndex(savePath);
+      await this.index.writeIndex(savePath);
 
       // Save mappings and metadata
       const mappingsPath = savePath + '.mappings.json';
@@ -328,7 +335,7 @@ export class HNSWLibBackend implements VectorBackend {
       this.index = new HierarchicalNSW(metric, this.config.dimension);
 
       // Load HNSW index
-      this.index.readIndex(loadPath);
+      await this.index.readIndex(loadPath);
       this.index.setEf(this.config.efSearch!);
 
       // Load mappings and metadata

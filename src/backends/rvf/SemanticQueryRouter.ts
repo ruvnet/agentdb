@@ -127,9 +127,13 @@ export class SemanticQueryRouter {
 
     try {
       const { SemanticRouter } = await import('@ruvector/router');
+      // @ruvector/router reads `config.threshold || 0.7`, so a threshold of 0
+      // became 0.7 and dropped every match below it. Pass a value just below
+      // zero instead: it keeps scores >= 0, like the fallback router.
+      const threshold = config.threshold ?? 0.0;
       instance.router = new SemanticRouter({
         dimension: config.dimension,
-        threshold: config.threshold ?? 0.0,
+        threshold: threshold === 0 ? -1e-9 : threshold,
       });
       instance._useNative = true;
     } catch {

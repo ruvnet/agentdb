@@ -1,10 +1,19 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import path from 'path';
 
 export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    exclude: [
+      ...configDefaults.exclude,
+      // Run by `claude plugin test plugins/agentdb` (imports claude-code/testing).
+      'plugins/**',
+      // Need a real browser (`window`) or are standalone node scripts.
+      'tests/browser/attention-browser.test.js',
+      'tests/browser/flash-attention-v2-browser.test.js',
+      'tests/browser/browser-bundle-v2.test.js',
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html', 'lcov'],

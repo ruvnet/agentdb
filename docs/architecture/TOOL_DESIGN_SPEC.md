@@ -42,7 +42,7 @@ This document provides comprehensive design specifications for **11 missing MCP 
 
 ### Technology Stack
 
-- **Runtime:** Node.js 18+ with ESM
+- **Runtime:** Node.js 20.9.0+ with ESM
 - **Database:** SQLite 3.35+ via better-sqlite3
 - **Embeddings:** Xenova/all-MiniLM-L6-v2 (384-dim) via @xenova/transformers
 - **MCP Protocol:** @modelcontextprotocol/sdk v1.0+

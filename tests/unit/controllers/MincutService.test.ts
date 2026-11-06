@@ -547,3 +547,17 @@ describe('MincutService', () => {
     });
   });
 });
+
+describe('MincutService graph input forms', () => {
+  it('partitions an object-keyed graph like the same adjacency array', async () => {
+    const service = new MincutService({ algorithm: 'stoer-wagner', maxPartitionSize: 10, minCutRatio: 0.1 } as MincutConfig);
+    await service.initialize();
+    const asObject = { 0: [1, 2], 1: [0, 2], 2: [0, 1, 3], 3: [2, 4, 5], 4: [3, 5], 5: [3, 4] };
+    const asArray: GraphEdges = [[1, 2], [0, 2], [0, 1, 3], [2, 4, 5], [3, 5], [3, 4]];
+    const a = await service.stoerWagnerMincut(asObject);
+    const b = await service.stoerWagnerMincut(asArray);
+    expect(a.cutSize).toBe(b.cutSize);
+    expect(a.partitions).toEqual(b.partitions);
+    expect(service.getPartitionStats(a, asObject).numPartitions).toBe(b.partitions.length);
+  });
+});

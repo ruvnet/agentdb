@@ -7,7 +7,7 @@
  * - db-fallback PRAGMA validation
  */
 
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { createDatabase } from '../../src/db-fallback';
 import { BatchOperations } from '../../src/optimizations/BatchOperations';
 import { EmbeddingService } from '../../src/controllers/EmbeddingService';
@@ -16,6 +16,19 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 describe('Integration Security Tests', () => {
+  // The PRAGMA checks below exercise db-fallback's sql.js wrapper (it throws
+  // ValidationError and exposes stmt.finalize). Native better-sqlite3 rejects
+  // stacked pragmas itself, with its own error type.
+  let savedForceSqlJs: string | undefined;
+  beforeAll(() => {
+    savedForceSqlJs = process.env.AGENTDB_FORCE_SQLJS;
+    process.env.AGENTDB_FORCE_SQLJS = '1';
+  });
+  afterAll(() => {
+    if (savedForceSqlJs === undefined) delete process.env.AGENTDB_FORCE_SQLJS;
+    else process.env.AGENTDB_FORCE_SQLJS = savedForceSqlJs;
+  });
+
   let db: any;
   let batchOps: BatchOperations;
   const testDbPath = path.join(__dirname, 'test-security.db');
@@ -87,7 +100,10 @@ describe('Integration Security Tests', () => {
     it('should block dangerous PRAGMA commands', () => {
       // Information disclosure attempts
       expect(() => db.pragma('database_list')).toThrow(ValidationError);
-      expect(() => db.pragma('table_info(episodes)')).toThrow(ValidationError);
+      expect(() => db.pragma('schema_version')).toThrow(ValidationError);
+      expect(() => db.pragma('index_list(episodes)')).toThrow(ValidationError);
+      // table_info(identifier) is whitelisted (BatchOperations uses it); smuggling is not
+      expect(() => db.pragma("table_info(episodes); DROP TABLE episodes")).toThrow(ValidationError);
     });
   });
 
@@ -184,12 +200,10 @@ describe('Integration Security Tests', () => {
       // Attempt to inject via parameter value (should be safely escaped)
       const safeSessionId = "session-1'; DELETE FROM episodes--";
 
-      // This should fail validation before reaching the database
-      expect(() => {
-        batchOps.bulkDelete('episodes', { session_id: safeSessionId });
-      }).toThrow(); // Should throw due to invalid characters in session_id
+      // Condition values are bound as parameters, so the payload is compared as a
+      // literal string: it matches no row and deletes nothing.
+      expect(batchOps.bulkDelete('episodes', { session_id: safeSessionId })).toBe(0);
 
-      // Even if it somehow reached DB, parameterized query would treat it as literal string
       const count = db.prepare('SELECT COUNT(*) as count FROM episodes').get();
       expect(count.count).toBe(3); // All records still present
     });
@@ -223,9 +237,8 @@ describe('Integration Security Tests', () => {
       // Classic "Little Bobby Tables" XKCD attack
       const bobbyTables = "Robert'); DROP TABLE episodes;--";
 
-      expect(() => {
-        batchOps.bulkDelete('episodes', { session_id: bobbyTables });
-      }).toThrow();
+      // Bound as a parameter: treated as a literal session_id, matches nothing
+      expect(batchOps.bulkDelete('episodes', { session_id: bobbyTables })).toBe(0);
 
       // Verify table still exists
       const count = db.prepare('SELECT COUNT(*) as count FROM episodes').get();
@@ -250,9 +263,10 @@ describe('Integration Security Tests', () => {
     });
 
     it('should prevent stacked queries', () => {
-      expect(() => {
-        batchOps.bulkDelete('episodes', { session_id: "'; DELETE FROM episodes; --" });
-      }).toThrow();
+      // Bound as a parameter: the stacked DELETE is never executed
+      expect(batchOps.bulkDelete('episodes', { session_id: "'; DELETE FROM episodes; --" })).toBe(0);
+      const count = db.prepare('SELECT COUNT(*) as count FROM episodes').get();
+      expect(count.count).toBe(3);
     });
   });
 });
