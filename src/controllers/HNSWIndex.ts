@@ -290,8 +290,12 @@ export class HNSWIndex {
     const searchStart = performance.now();
 
     try {
+      // hnswlib throws when k exceeds maxElements; no search can return more
+      // than the indexed points, so clamp instead of failing.
+      const kEff = Math.min(k, this.index.getCurrentCount());
+
       // Perform HNSW search (convert Float32Array to number[])
-      const result = this.index.searchKnn(Array.from(query), k);
+      const result = this.index.searchKnn(Array.from(query), kEff);
 
       const searchTime = performance.now() - searchStart;
       this.lastSearchTime = searchTime;
