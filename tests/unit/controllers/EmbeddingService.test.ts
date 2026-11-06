@@ -4,7 +4,7 @@
  * Tests text embedding generation, caching, and different providers
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { EmbeddingService } from '../../../src/controllers/EmbeddingService.js';
 
 describe('EmbeddingService', () => {
@@ -134,18 +134,15 @@ describe('EmbeddingService', () => {
     it('should cache embeddings', async () => {
       const text = 'cached text';
 
-      // First call - generates embedding
-      const startTime1 = Date.now();
-      await embedder.embed(text);
-      const duration1 = Date.now() - startTime1;
+      // The mock embedder finishes in well under 1 ms, so comparing Date.now()
+      // durations reads 0 < 0. Assert the cache hit directly instead: the
+      // second call must return the stored array, not compute a new one.
+      const computeSpy = vi.spyOn(embedder as any, 'generateEmbedding');
+      const first = await embedder.embed(text);
+      const second = await embedder.embed(text);
 
-      // Second call - should be cached (faster)
-      const startTime2 = Date.now();
-      await embedder.embed(text);
-      const duration2 = Date.now() - startTime2;
-
-      // Cached call should be significantly faster
-      expect(duration2).toBeLessThan(duration1);
+      expect(second).toBe(first);
+      expect(computeSpy).toHaveBeenCalledTimes(1);
     });
 
     it('should return same instance from cache', async () => {

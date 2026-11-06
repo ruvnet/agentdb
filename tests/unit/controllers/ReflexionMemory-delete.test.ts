@@ -96,6 +96,12 @@ class FakeEmbedder {
   async embed(_text: string): Promise<Float32Array> {
     return new Float32Array([1, 0, 0]);
   }
+  async embedQuery(text: string): Promise<Float32Array> {
+    return this.embed(text);
+  }
+  async embedPassage(text: string): Promise<Float32Array> {
+    return this.embed(text);
+  }
 }
 
 describe('ReflexionMemory.deleteEpisode (issue #150)', () => {

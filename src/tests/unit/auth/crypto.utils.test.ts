@@ -360,7 +360,8 @@ describe('Crypto Utils', () => {
 
   describe('validatePasswordStrength', () => {
     it('should accept strong password', () => {
-      const result = validatePasswordStrength('StrongPass123!');
+      // No ascending run like '123': the policy rejects sequential characters.
+      const result = validatePasswordStrength('StrongPass975!');
 
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);

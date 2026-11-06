@@ -63,7 +63,7 @@ describe('CausalMemoryGraph', () => {
   });
 
   describe('addCausalEdge', () => {
-    it('should add causal edge with all required fields', () => {
+    it('should add causal edge with all required fields', async () => {
       const edge: CausalEdge = {
         fromMemoryId: 1,
         fromMemoryType: 'episode',
@@ -76,13 +76,13 @@ describe('CausalMemoryGraph', () => {
         evidenceIds: ['e1', 'e2', 'e3'],
       };
 
-      const edgeId = causalGraph.addCausalEdge(edge);
+      const edgeId = await causalGraph.addCausalEdge(edge);
 
       expect(edgeId).toBeGreaterThan(0);
       expect(typeof edgeId).toBe('number');
     });
 
-    it('should add causal edge with minimal fields', () => {
+    it('should add causal edge with minimal fields', async () => {
       const edge: CausalEdge = {
         fromMemoryId: 1,
         fromMemoryType: 'skill',
@@ -92,12 +92,12 @@ describe('CausalMemoryGraph', () => {
         confidence: 0.8,
       };
 
-      const edgeId = causalGraph.addCausalEdge(edge);
+      const edgeId = await causalGraph.addCausalEdge(edge);
 
       expect(edgeId).toBeGreaterThan(0);
     });
 
-    it('should handle negative uplift (harmful effects)', () => {
+    it('should handle negative uplift (harmful effects)', async () => {
       const edge: CausalEdge = {
         fromMemoryId: 1,
         fromMemoryType: 'episode',
@@ -109,12 +109,12 @@ describe('CausalMemoryGraph', () => {
         sampleSize: 50,
       };
 
-      const edgeId = causalGraph.addCausalEdge(edge);
+      const edgeId = await causalGraph.addCausalEdge(edge);
 
       expect(edgeId).toBeGreaterThan(0);
     });
 
-    it('should store edge with mechanism explanation', () => {
+    it('should store edge with mechanism explanation', async () => {
       const edge: CausalEdge = {
         fromMemoryId: 1,
         fromMemoryType: 'episode',
@@ -126,7 +126,7 @@ describe('CausalMemoryGraph', () => {
         mechanism: 'Adding tests reduces bugs by catching errors early',
       };
 
-      const edgeId = causalGraph.addCausalEdge(edge);
+      const edgeId = await causalGraph.addCausalEdge(edge);
 
       expect(edgeId).toBeGreaterThan(0);
     });
@@ -297,9 +297,9 @@ describe('CausalMemoryGraph', () => {
   });
 
   describe('queryCausalEffects', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       // Seed some causal edges
-      causalGraph.addCausalEdge({
+      await causalGraph.addCausalEdge({
         fromMemoryId: 1,
         fromMemoryType: 'episode',
         toMemoryId: 2,
@@ -310,7 +310,7 @@ describe('CausalMemoryGraph', () => {
         sampleSize: 100,
       });
 
-      causalGraph.addCausalEdge({
+      await causalGraph.addCausalEdge({
         fromMemoryId: 1,
         fromMemoryType: 'episode',
         toMemoryId: 3,
@@ -321,7 +321,7 @@ describe('CausalMemoryGraph', () => {
         sampleSize: 80,
       });
 
-      causalGraph.addCausalEdge({
+      await causalGraph.addCausalEdge({
         fromMemoryId: 2,
         fromMemoryType: 'episode',
         toMemoryId: 4,
@@ -387,7 +387,7 @@ describe('CausalMemoryGraph', () => {
   });
 
   describe('Edge Cases', () => {
-    it('should handle zero uplift', () => {
+    it('should handle zero uplift', async () => {
       const edge: CausalEdge = {
         fromMemoryId: 1,
         fromMemoryType: 'episode',
@@ -398,12 +398,12 @@ describe('CausalMemoryGraph', () => {
         confidence: 0.95,
       };
 
-      const edgeId = causalGraph.addCausalEdge(edge);
+      const edgeId = await causalGraph.addCausalEdge(edge);
 
       expect(edgeId).toBeGreaterThan(0);
     });
 
-    it('should handle very high confidence', () => {
+    it('should handle very high confidence', async () => {
       const edge: CausalEdge = {
         fromMemoryId: 1,
         fromMemoryType: 'episode',
@@ -415,12 +415,12 @@ describe('CausalMemoryGraph', () => {
         sampleSize: 1000,
       };
 
-      const edgeId = causalGraph.addCausalEdge(edge);
+      const edgeId = await causalGraph.addCausalEdge(edge);
 
       expect(edgeId).toBeGreaterThan(0);
     });
 
-    it('should handle low confidence edges', () => {
+    it('should handle low confidence edges', async () => {
       const edge: CausalEdge = {
         fromMemoryId: 1,
         fromMemoryType: 'episode',
@@ -432,12 +432,12 @@ describe('CausalMemoryGraph', () => {
         sampleSize: 10,
       };
 
-      const edgeId = causalGraph.addCausalEdge(edge);
+      const edgeId = await causalGraph.addCausalEdge(edge);
 
       expect(edgeId).toBeGreaterThan(0);
     });
 
-    it('should handle empty evidence IDs', () => {
+    it('should handle empty evidence IDs', async () => {
       const edge: CausalEdge = {
         fromMemoryId: 1,
         fromMemoryType: 'episode',
@@ -448,18 +448,18 @@ describe('CausalMemoryGraph', () => {
         evidenceIds: [],
       };
 
-      const edgeId = causalGraph.addCausalEdge(edge);
+      const edgeId = await causalGraph.addCausalEdge(edge);
 
       expect(edgeId).toBeGreaterThan(0);
     });
   });
 
   describe('Performance', () => {
-    it('should add 100 causal edges efficiently', () => {
+    it('should add 100 causal edges efficiently', async () => {
       const startTime = Date.now();
 
       for (let i = 0; i < 100; i++) {
-        causalGraph.addCausalEdge({
+        await causalGraph.addCausalEdge({
           fromMemoryId: i,
           fromMemoryType: 'episode',
           toMemoryId: i + 1,
@@ -476,10 +476,10 @@ describe('CausalMemoryGraph', () => {
       expect(duration).toBeLessThan(1000); // Should complete in less than 1 second
     });
 
-    it('should query causal effects efficiently', () => {
+    it('should query causal effects efficiently', async () => {
       // Add test data
       for (let i = 0; i < 50; i++) {
-        causalGraph.addCausalEdge({
+        await causalGraph.addCausalEdge({
           fromMemoryId: 1,
           fromMemoryType: 'episode',
           toMemoryId: i + 2,

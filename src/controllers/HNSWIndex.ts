@@ -286,13 +286,18 @@ export class HNSWIndex {
       throw new Error('Index not built. Call buildIndex() first.');
     }
 
-    const searchStart = Date.now();
+    // performance.now(): HNSW queries are often sub-millisecond, which Date.now() reports as 0.
+    const searchStart = performance.now();
 
     try {
-      // Perform HNSW search (convert Float32Array to number[])
-      const result = this.index.searchKnn(Array.from(query), k);
+      // hnswlib throws when k exceeds maxElements; no search can return more
+      // than the indexed points, so clamp instead of failing.
+      const kEff = Math.min(k, this.index.getCurrentCount());
 
-      const searchTime = Date.now() - searchStart;
+      // Perform HNSW search (convert Float32Array to number[])
+      const result = this.index.searchKnn(Array.from(query), kEff);
+
+      const searchTime = performance.now() - searchStart;
       this.lastSearchTime = searchTime;
       this.totalSearches++;
       this.totalSearchTime += searchTime;
@@ -411,7 +416,7 @@ export class HNSWIndex {
       }
 
       // Save HNSW index
-      this.index.writeIndex(this.config.indexPath);
+      await this.index.writeIndex(this.config.indexPath);
 
       // Save mappings
       const mappingsPath = this.config.indexPath + '.mappings.json';
@@ -446,7 +451,7 @@ export class HNSWIndex {
 
       // Load HNSW index
       this.index = new HierarchicalNSW(this.config.metric, this.config.dimension);
-      this.index.readIndex(this.config.indexPath);
+      await this.index.readIndex(this.config.indexPath);
       this.index.setEf(this.config.efSearch);
 
       // Load mappings

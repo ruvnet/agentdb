@@ -414,7 +414,13 @@ describe('HNSWLibBackend', () => {
       expect(backend.getStats().count).toBe(1000);
     });
 
-    it('should search efficiently on large dataset', () => {
+    it('should search efficiently on large dataset', async () => {
+      // 10K vectors exceed the shared config's maxElements (1000), which hnswlib
+      // enforces; give this test a backend sized for the dataset.
+      backend.close();
+      backend = new HNSWLibBackend({ ...config, maxElements: 10000 });
+      await backend.initialize();
+
       // Insert 10K vectors
       for (let i = 0; i < 10000; i++) {
         const embedding = new Float32Array(384);
