@@ -3466,10 +3466,18 @@ ${colors.bright}EXAMPLES:${colors.reset}
 `);
 }
 
-// ESM entry point check - run if this is the main module
-// Handle both direct execution and npx/symlink scenarios
-const isMainModule = import.meta.url === `file://${process.argv[1]}` ||
-                     import.meta.url.endsWith('/agentdb-cli.js');
+// ESM entry point check - run only when this file is the executed script.
+// realpath resolves npx / node_modules/.bin symlinks; a plain import of this
+// module (e.g. `import { AgentDBCLI } from 'agentdb/cli'`) must not run main()
+// and process.exit() the host.
+const isMainModule = (() => {
+  if (!process.argv[1]) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
 
 // Run main() when executed as main module (removed argv length check to allow no-args help)
 if (isMainModule) {
