@@ -270,7 +270,13 @@ export class NativeAccelerator {
     const config = TENSOR_LEVELS[level];
     if (this._tensorCompress && config) {
       try {
-        const json: string = this._tensorCompress.compressWithLevel(Array.from(vec), config);
+        // gnn 0.1.25 takes a Float32Array, 0.1.23 a plain array.
+        let json: string;
+        try {
+          json = this._tensorCompress.compressWithLevel(vec, config);
+        } catch {
+          json = this._tensorCompress.compressWithLevel(Array.from(vec), config);
+        }
         return new TextEncoder().encode(json);
       } catch { /* fallback */ }
     }
@@ -524,7 +530,9 @@ export class NativeAccelerator {
       // compress/decompress are instance methods. Use the raw binding: the
       // JS TensorCompress wrapper passes a Float32Array where the native
       // method requires a plain array, so every call through it throws.
-      const Ctor = gnnMod.NativeTensorCompress ?? gnnMod.default?.NativeTensorCompress;
+      // @ruvector/gnn 0.1.25 renamed NativeTensorCompress to TensorCompress.
+      const Ctor = gnnMod.NativeTensorCompress ?? gnnMod.default?.NativeTensorCompress
+        ?? gnnMod.TensorCompress ?? gnnMod.default?.TensorCompress;
       if (typeof Ctor?.prototype?.compressWithLevel === 'function') this._tensorCompress = new Ctor();
     } catch { /* not available */ }
   }
