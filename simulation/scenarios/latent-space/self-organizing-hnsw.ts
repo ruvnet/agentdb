@@ -17,6 +17,12 @@ import type {
   SimulationReport,
 } from '../../types';
 
+/**
+ * Wall-clock budget for one run(). Kept below the 600 s bench hook timeout so
+ * an oversized config fails with a clear error instead of hanging.
+ */
+export const SIMULATION_TIME_BUDGET_MS = 540_000;
+
 export interface SelfOrganizingMetrics {
   // Adaptation performance
   degradationPrevention: number; // % degradation prevented over time
@@ -77,7 +83,9 @@ export const selfOrganizingHNSWScenario: SimulationScenario = {
       { name: 'evolutionary', parameters: { mutationRate: 0.05 } },
       { name: 'hybrid', parameters: { horizon: 10, learningRate: 0.001 } }, // Best: 2.1% degradation
     ] as AdaptationStrategy[],
-    graphSizes: [100000, 1000000],
+    // Was [100000, 1000000]: graph construction at those sizes did not finish
+    // within the bench timeout even with sampled neighbor selection.
+    graphSizes: [5000, 15000],
     simulationDays: 30,
     workloadShifts: [
       { day: 0, type: 'uniform' },
@@ -99,6 +107,7 @@ export const selfOrganizingHNSWScenario: SimulationScenario = {
   async run(config: typeof selfOrganizingHNSWScenario.config): Promise<SimulationReport> {
     const results: any[] = [];
     const startTime = Date.now();
+    const deadline = startTime + SIMULATION_TIME_BUDGET_MS;
 
     console.log('🤖 Starting Self-Organizing HNSW Analysis...\n');
 
@@ -110,7 +119,7 @@ export const selfOrganizingHNSWScenario: SimulationScenario = {
           console.log(`  └─ ${size} nodes, ${(deletionRate * 100).toFixed(0)}% deletion rate`);
 
           // Initialize HNSW
-          const hnsw = await initializeHNSW(size, 128);
+          const hnsw = await initializeHNSW(size, 128, deadline);
 
           // Record initial performance
           const initialMetrics = await measurePerformance(hnsw);
@@ -121,7 +130,8 @@ export const selfOrganizingHNSWScenario: SimulationScenario = {
             strategy,
             config.simulationDays,
             config.workloadShifts,
-            deletionRate
+            deletionRate,
+            deadline
           );
 
           // Final performance
@@ -191,7 +201,7 @@ export const selfOrganizingHNSWScenario: SimulationScenario = {
 /**
  * Initialize HNSW graph
  */
-async function initializeHNSW(size: number, dim: number): Promise<any> {
+async function initializeHNSW(size: number, dim: number, deadline: number): Promise<any> {
   const vectors = Array(size).fill(0).map(() => generateRandomVector(dim));
 
   // Build HNSW with initial parameters
@@ -218,6 +228,10 @@ async function initializeHNSW(size: number, dim: number): Promise<any> {
     for (let i = 0; i < layerSize; i++) {
       const neighbors = findNearestNeighbors(vectors, i, M);
       edges.set(i, neighbors);
+      if ((i & 1023) === 1023) {
+        checkBudget(deadline);
+        await yieldToEventLoop();
+      }
     }
 
     hnsw.layers.push({ edges, size: layerSize });
@@ -226,13 +240,51 @@ async function initializeHNSW(size: number, dim: number): Promise<any> {
   return hnsw;
 }
 
+/**
+ * Candidate cap for neighbor selection. An exact scan is O(n) per node, so
+ * building the graph was O(n^2 log n): at the configured 100k/1M nodes it
+ * never finished, and because the loop is synchronous the vitest timeouts
+ * could not fire either (a run spun four forks at 100% CPU for 10 h).
+ * Above the cap, neighbors are chosen from a random sample of candidates.
+ */
+const KNN_CANDIDATE_CAP = 512;
+
 function findNearestNeighbors(vectors: number[][], queryIdx: number, k: number): number[] {
-  return vectors
-    .map((v, i) => ({ idx: i, dist: euclideanDistance(vectors[queryIdx], v) }))
-    .filter(({ idx }) => idx !== queryIdx)
+  const n = vectors.length;
+  const query = vectors[queryIdx];
+  let candidates: number[];
+
+  if (n - 1 <= KNN_CANDIDATE_CAP) {
+    candidates = [];
+    for (let i = 0; i < n; i++) if (i !== queryIdx) candidates.push(i);
+  } else {
+    const picked = new Set<number>();
+    while (picked.size < KNN_CANDIDATE_CAP) {
+      const idx = Math.floor(Math.random() * n);
+      if (idx !== queryIdx) picked.add(idx);
+    }
+    candidates = [...picked];
+  }
+
+  return candidates
+    .map(idx => ({ idx, dist: euclideanDistance(query, vectors[idx]) }))
     .sort((a, b) => a.dist - b.dist)
     .slice(0, k)
     .map(({ idx }) => idx);
+}
+
+/** Yield to the event loop so test timeouts can fire during long runs. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise(resolve => setImmediate(resolve));
+}
+
+/** Throws once the run's wall-clock budget is spent, instead of running on. */
+function checkBudget(deadline: number): void {
+  if (Date.now() > deadline) {
+    throw new Error(
+      `self-organizing-hnsw: time budget exceeded (${SIMULATION_TIME_BUDGET_MS} ms); lower graphSizes`
+    );
+  }
 }
 
 /**
@@ -298,11 +350,14 @@ async function simulateTimeEvolution(
   strategy: AdaptationStrategy,
   days: number,
   workloadShifts: any[],
-  deletionRate: number
+  deletionRate: number,
+  deadline: number
 ): Promise<any> {
   const timeline: any[] = [];
 
   for (let day = 0; day < days; day++) {
+    checkBudget(deadline);
+    await yieldToEventLoop();
     // Check for workload shift
     const shift = workloadShifts.find(s => s.day === day);
     if (shift) {

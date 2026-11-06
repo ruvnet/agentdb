@@ -186,15 +186,9 @@ export class WASMVectorSearch {
       '/workspaces/agentic-flow/packages/agentic-flow/wasm/reasoningbank/' + moduleName,
     );
 
-    // 6. Check for installed npm package
-    try {
-      const npmPath = require.resolve('@ruvector/wasm/reasoningbank_wasm.js');
-      if (npmPath) {
-        searchPaths.unshift(npmPath); // Prioritize npm package
-      }
-    } catch {
-      // @ruvector/wasm not installed as npm package
-    }
+    // No npm-package probe: `require` is undefined in this ES module, so a
+    // require.resolve('@ruvector/wasm/...') here always threw, and
+    // @ruvector/wasm does not ship reasoningbank_wasm.js anyway.
 
     return searchPaths;
   }
