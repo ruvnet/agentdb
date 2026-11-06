@@ -400,7 +400,8 @@ export function validatePragmaCommand(pragma: string): string {
   }
   const pragmaName = (assignment ?? call)![1].toLowerCase();
 
-  if (!ALLOWED_PRAGMAS.has(pragmaName)) {
+  // table_info is only allowed in its call form, table_info(identifier)
+  if (!ALLOWED_PRAGMAS.has(pragmaName) || (pragmaName === 'table_info' && !call)) {
     throw new ValidationError(
       `Invalid PRAGMA command: ${pragmaName}. Allowed: ${Array.from(ALLOWED_PRAGMAS).join(', ')}`,
       'INVALID_PRAGMA',

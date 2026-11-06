@@ -8,7 +8,7 @@
  * 4. Column name injection in WHERE/SET clauses
  */
 
-import { describe, it, expect, beforeEach } from '@jest/globals';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   validateTableName,
   validateColumnName,
@@ -113,7 +113,9 @@ describe('SQL Injection Prevention - Input Validation', () => {
     it('should reject dangerous PRAGMA commands', () => {
       // These PRAGMAs could be used for attacks
       expect(() => validatePragmaCommand('database_list')).toThrow(ValidationError);
+      // table_info is whitelisted (99a1f9b) but only in the strict table_info(identifier) form
       expect(() => validatePragmaCommand('table_info')).toThrow(ValidationError);
+      expect(() => validatePragmaCommand('index_list(episodes)')).toThrow(ValidationError);
       expect(() => validatePragmaCommand('schema_version')).toThrow(ValidationError);
     });
 
@@ -263,8 +265,12 @@ describe('SQL Injection Prevention - Real-World Attack Scenarios', () => {
     });
 
     it('should prevent schema information leakage', () => {
-      // Attacker tries to get table structure
-      expect(() => validatePragmaCommand("table_info(users)")).toThrow(ValidationError);
+      // table_info(identifier) is allowed (BatchOperations validates columns with it),
+      // but other schema-introspection pragmas and smuggled payloads are not
+      expect(() => validatePragmaCommand('database_list')).toThrow(ValidationError);
+      expect(() => validatePragmaCommand('index_list(users)')).toThrow(ValidationError);
+      expect(() => validatePragmaCommand("table_info(users) UNION SELECT sql FROM sqlite_master")).toThrow(ValidationError);
+      expect(() => validatePragmaCommand("table_info('users'); SELECT 1")).toThrow(ValidationError);
     });
   });
 

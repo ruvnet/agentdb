@@ -9,7 +9,7 @@
  * - Resource tracking
  */
 
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   ResourceTracker,
   RateLimiter,
@@ -18,6 +18,7 @@ import {
   withTimeout,
   enforceBatchLimits,
   logResourceUsage,
+  globalResourceTracker,
 } from '../../src/security/limits';
 import { SECURITY_LIMITS } from '../../src/security/validation';
 
@@ -146,13 +147,20 @@ describe('AgentDB v2 Security: Query Timeouts', () => {
     });
 
     it('should use default timeout', async () => {
-      const slowPromise = new Promise((resolve) => {
-        setTimeout(resolve, SECURITY_LIMITS.QUERY_TIMEOUT_MS + 1000);
-      });
+      // The default (QUERY_TIMEOUT_MS) is as long as vitest's testTimeout, so
+      // advance fake time instead of waiting it out.
+      vi.useFakeTimers();
+      try {
+        const slowPromise = new Promise((resolve) => {
+          setTimeout(resolve, SECURITY_LIMITS.QUERY_TIMEOUT_MS + 1000);
+        });
 
-      await expect(
-        withTimeout(slowPromise)
-      ).rejects.toThrow(/timeout/);
+        const assertion = expect(withTimeout(slowPromise)).rejects.toThrow(/timeout/);
+        await vi.advanceTimersByTimeAsync(SECURITY_LIMITS.QUERY_TIMEOUT_MS);
+        await assertion;
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('should handle promise rejection', async () => {
@@ -394,12 +402,16 @@ describe('AgentDB v2 Security: Batch Limit Enforcement', () => {
     });
 
     it('should reject batches requiring excessive memory', () => {
-      // Large batch with high dimension
+      // Smallest dimension at which a max-size batch needs >50% of MAX_MEMORY_MB
+      // (MAX_BATCH_SIZE x MAX_DIMENSION is only ~195MB, far below that).
+      const dimension =
+        Math.ceil((SECURITY_LIMITS.MAX_MEMORY_MB * 0.5 * 1024 * 1024) /
+          (4 * 1.25 * SECURITY_LIMITS.MAX_BATCH_SIZE)) + 1;
       expect(() => {
-        enforceBatchLimits(10000, 4096, tracker);
+        enforceBatchLimits(SECURITY_LIMITS.MAX_BATCH_SIZE, dimension, tracker);
       }).toThrow(SecurityError);
       expect(() => {
-        enforceBatchLimits(10000, 4096, tracker);
+        enforceBatchLimits(SECURITY_LIMITS.MAX_BATCH_SIZE, dimension, tracker);
       }).toThrow(/would use.*MB/);
     });
 
@@ -411,8 +423,9 @@ describe('AgentDB v2 Security: Batch Limit Enforcement', () => {
     });
 
     it('should prevent cumulative memory overflow', () => {
-      // First batch OK
-      enforceBatchLimits(5000, 1024, tracker);
+      // Usage already near the limit; a batch that is fine on its own is OK first time
+      tracker.updateMemoryUsage(SECURITY_LIMITS.MAX_MEMORY_MB - 30);
+      enforceBatchLimits(5000, 1024, tracker); // ~24MB
 
       // Second batch would exceed memory
       expect(() => {
@@ -425,7 +438,8 @@ describe('AgentDB v2 Security: Batch Limit Enforcement', () => {
 describe('AgentDB v2 Security: Resource Monitoring', () => {
   describe('logResourceUsage', () => {
     it('should log resource statistics', () => {
-      const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+      // Diagnostics go to stderr since 3afa31f
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       logResourceUsage();
 
@@ -436,19 +450,22 @@ describe('AgentDB v2 Security: Resource Monitoring', () => {
     });
 
     it('should warn on high memory usage', () => {
-      const tracker = new ResourceTracker();
-      tracker.updateMemoryUsage(SECURITY_LIMITS.MAX_MEMORY_MB * 0.85);
+      // logResourceUsage() reports the global tracker
+      globalResourceTracker.updateMemoryUsage(SECURITY_LIMITS.MAX_MEMORY_MB * 0.85);
 
-      const consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation();
-      const consoleLogSpy = jest.spyOn(console, 'log').mockImplementation();
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-      logResourceUsage();
+      try {
+        logResourceUsage();
 
-      expect(consoleWarnSpy).toHaveBeenCalled();
-      expect(consoleWarnSpy.mock.calls[0][0]).toContain('Memory usage above 80%');
-
-      consoleWarnSpy.mockRestore();
-      consoleLogSpy.mockRestore();
+        expect(consoleWarnSpy).toHaveBeenCalled();
+        expect(consoleWarnSpy.mock.calls[0][0]).toContain('Memory usage above 80%');
+      } finally {
+        consoleWarnSpy.mockRestore();
+        consoleErrorSpy.mockRestore();
+        globalResourceTracker.reset();
+      }
     });
   });
 });
@@ -500,10 +517,17 @@ describe('AgentDB v2 Security: Real-World Scenarios', () => {
   it('should prevent memory exhaustion attack', () => {
     const tracker = new ResourceTracker();
 
-    // Attacker tries to allocate massive vector database
+    // Attacker repeats the largest allowed batch to allocate a massive vector database
+    const perBatchMB = tracker.estimateVectorMemory(
+      SECURITY_LIMITS.MAX_BATCH_SIZE,
+      SECURITY_LIMITS.MAX_DIMENSION
+    );
+    const maxBatches = Math.ceil(SECURITY_LIMITS.MAX_MEMORY_MB / perBatchMB);
     expect(() => {
-      enforceBatchLimits(SECURITY_LIMITS.MAX_BATCH_SIZE, SECURITY_LIMITS.MAX_DIMENSION, tracker);
-    }).toThrow(/would use.*MB/);
+      for (let i = 0; i <= maxBatches; i++) {
+        enforceBatchLimits(SECURITY_LIMITS.MAX_BATCH_SIZE, SECURITY_LIMITS.MAX_DIMENSION, tracker);
+      }
+    }).toThrow(/Memory limit exceeded/);
   });
 
   it('should enforce combined limits', () => {
