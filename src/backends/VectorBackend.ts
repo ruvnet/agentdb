@@ -58,6 +58,12 @@ export interface SearchOptions {
   filter?: Record<string, unknown>;
 
   /**
+   * RVF backend: answer with an exact brute-force scan instead of the HNSW
+   * index (@ruvector/rvf >= 0.4.7). Other backends ignore it.
+   */
+  forceExact?: boolean;
+
+  /**
    * Caller-owned opaque correlation key for later feedback (issue #14).
    *
    * Backends that support async feedback (e.g. `SelfLearningRvfBackend`)

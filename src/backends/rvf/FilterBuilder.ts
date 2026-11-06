@@ -1,8 +1,11 @@
 /**
  * FilterBuilder - Constructs RvfFilterExpr objects from a simple predicate DSL.
  *
- * Translates field-name-based predicates into field-ID-based RvfFilterExpr
- * objects that the @ruvector/rvf SDK expects.
+ * Translates field-name predicates into RvfFilterExpr objects for
+ * @ruvector/rvf >= 0.4.7. Leaves name their field by the metadata key used at
+ * ingest (`{ op, field: 'status', value }`); rvf resolves the name against the
+ * store's own field registry. Numeric ids assigned by this builder are per
+ * instance and would not match that registry, so they are never emitted.
  *
  * Usage:
  *   const filter = new FilterBuilder()
@@ -17,15 +20,25 @@
 /** Re-export filter types from @ruvector/rvf for convenience */
 export type RvfFilterValue = number | string | boolean;
 
+/**
+ * Names the field a leaf tests: `field` is the metadata key used at ingest
+ * (what FilterBuilder emits); `fieldId` is the raw rvf field id from the
+ * store's registry, accepted for callers that already hold one.
+ */
+export type RvfFilterField =
+  | { field: string; fieldId?: undefined }
+  | { fieldId: number; field?: undefined };
+
 export type RvfFilterExpr =
-  | { op: 'eq'; fieldId: number; value: RvfFilterValue }
-  | { op: 'ne'; fieldId: number; value: RvfFilterValue }
-  | { op: 'lt'; fieldId: number; value: RvfFilterValue }
-  | { op: 'le'; fieldId: number; value: RvfFilterValue }
-  | { op: 'gt'; fieldId: number; value: RvfFilterValue }
-  | { op: 'ge'; fieldId: number; value: RvfFilterValue }
-  | { op: 'in'; fieldId: number; values: RvfFilterValue[] }
-  | { op: 'range'; fieldId: number; low: RvfFilterValue; high: RvfFilterValue }
+  | ({ op: 'eq'; value: RvfFilterValue } & RvfFilterField)
+  | ({ op: 'ne'; value: RvfFilterValue } & RvfFilterField)
+  | ({ op: 'lt'; value: RvfFilterValue } & RvfFilterField)
+  | ({ op: 'le'; value: RvfFilterValue } & RvfFilterField)
+  | ({ op: 'gt'; value: RvfFilterValue } & RvfFilterField)
+  | ({ op: 'ge'; value: RvfFilterValue } & RvfFilterField)
+  | ({ op: 'in'; values: RvfFilterValue[] } & RvfFilterField)
+  /** rvf's native range is half-open: low <= value < high. */
+  | ({ op: 'range'; low: RvfFilterValue; high: RvfFilterValue } & RvfFilterField)
   | { op: 'and'; exprs: RvfFilterExpr[] }
   | { op: 'or'; exprs: RvfFilterExpr[] }
   | { op: 'not'; expr: RvfFilterExpr };
@@ -37,7 +50,7 @@ export type RvfFilterExpr =
  *   'active'          => eq('field', 'active')
  *   { $gt: 5 }        => gt('field', 5)
  *   { $in: [1,2,3] }  => in('field', [1,2,3])
- *   { $range: [0,10]} => range('field', 0, 10)
+ *   { $range: [0,10]} => range('field', 0, 10)   (inclusive: 0 <= v <= 10)
  *   { $ne: false }    => ne('field', false)
  */
 export type PredicateValue =
@@ -57,18 +70,30 @@ export type FilterPredicate = Record<string, PredicateValue>;
 /** Maximum number of filter expressions allowed (safety bound) */
 const MAX_FILTER_EXPRS = 64;
 
-/**
- * Maps field names to numeric IDs for RvfFilterExpr.
- *
- * Field IDs are assigned sequentially starting from 0.
- * The mapping is stable within a single FilterBuilder instance.
- */
+/** Maximum metadata field-name length accepted in a filter leaf */
+const MAX_FIELD_NAME_LENGTH = 256;
+
+function checkFieldName(name: string): string {
+  if (typeof name !== 'string' || name.length === 0) {
+    throw new Error('Filter field name must be a non-empty string');
+  }
+  if (name.length > MAX_FIELD_NAME_LENGTH) {
+    throw new Error(`Filter field name exceeds maximum length of ${MAX_FIELD_NAME_LENGTH}`);
+  }
+  return name;
+}
+
+/** Builds RvfFilterExpr trees whose leaves reference fields by name. */
 export class FilterBuilder {
   private fieldMap: Map<string, number> = new Map();
   private nextFieldId = 0;
   private exprs: RvfFilterExpr[] = [];
 
-  /** Get or assign a numeric field ID for a field name */
+  /**
+   * Get or assign a per-instance numeric id for a field name.
+   * @deprecated Ids from this map do not match rvf's stored field registry
+   * and are not used in built expressions; leaves carry `field: name`.
+   */
   fieldId(name: string): number {
     let id = this.fieldMap.get(name);
     if (id === undefined) {
@@ -78,56 +103,72 @@ export class FilterBuilder {
     return id;
   }
 
-  /** Get the field name to ID mapping */
+  /** @deprecated See fieldId(). */
   getFieldMap(): ReadonlyMap<string, number> {
     return this.fieldMap;
   }
 
+  /** Validate a field name and record it in the (deprecated) field map */
+  private name(field: string): string {
+    this.fieldId(checkFieldName(field));
+    return field;
+  }
+
   /** Add an equality predicate */
   eq(field: string, value: RvfFilterValue): this {
-    this.addExpr({ op: 'eq', fieldId: this.fieldId(field), value });
+    this.addExpr({ op: 'eq', field: this.name(field), value });
     return this;
   }
 
   /** Add a not-equal predicate */
   ne(field: string, value: RvfFilterValue): this {
-    this.addExpr({ op: 'ne', fieldId: this.fieldId(field), value });
+    this.addExpr({ op: 'ne', field: this.name(field), value });
     return this;
   }
 
   /** Add a less-than predicate */
   lt(field: string, value: RvfFilterValue): this {
-    this.addExpr({ op: 'lt', fieldId: this.fieldId(field), value });
+    this.addExpr({ op: 'lt', field: this.name(field), value });
     return this;
   }
 
   /** Add a less-than-or-equal predicate */
   le(field: string, value: RvfFilterValue): this {
-    this.addExpr({ op: 'le', fieldId: this.fieldId(field), value });
+    this.addExpr({ op: 'le', field: this.name(field), value });
     return this;
   }
 
   /** Add a greater-than predicate */
   gt(field: string, value: RvfFilterValue): this {
-    this.addExpr({ op: 'gt', fieldId: this.fieldId(field), value });
+    this.addExpr({ op: 'gt', field: this.name(field), value });
     return this;
   }
 
   /** Add a greater-than-or-equal predicate */
   ge(field: string, value: RvfFilterValue): this {
-    this.addExpr({ op: 'ge', fieldId: this.fieldId(field), value });
+    this.addExpr({ op: 'ge', field: this.name(field), value });
     return this;
   }
 
   /** Add an IN predicate (value in set) */
   in(field: string, values: RvfFilterValue[]): this {
-    this.addExpr({ op: 'in', fieldId: this.fieldId(field), values });
+    this.addExpr({ op: 'in', field: this.name(field), values });
     return this;
   }
 
-  /** Add a range predicate (low <= value <= high) */
+  /**
+   * Add an inclusive range predicate (low <= value <= high). Emitted as
+   * `and(ge, le)` because rvf's native `range` op excludes `high`.
+   */
   range(field: string, low: RvfFilterValue, high: RvfFilterValue): this {
-    this.addExpr({ op: 'range', fieldId: this.fieldId(field), low, high });
+    const name = this.name(field);
+    this.addExpr({
+      op: 'and',
+      exprs: [
+        { op: 'ge', field: name, value: low },
+        { op: 'le', field: name, value: high },
+      ],
+    });
     return this;
   }
 
