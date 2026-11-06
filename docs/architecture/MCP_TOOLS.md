@@ -1094,7 +1094,7 @@ export AGENTDB_DISCOUNT_FACTOR=0.95
 # Update to latest version
 npm install -g agentdb@latest
 
-# Check node version (need Node 18+)
+# Check node version (need Node 20.9.0+)
 node --version
 
 # Try with explicit path

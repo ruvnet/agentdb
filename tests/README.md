@@ -110,7 +110,7 @@ node tests/validation/comprehensive-validation.js
 - **@huggingface/transformers** - Embedding generation (optional)
 
 ### Environment
-- Node.js 18+
+- Node.js 20.9.0+
 - TypeScript 5.0+
 - Sufficient memory for large-scale tests (2GB+)
 

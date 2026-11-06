@@ -1,6 +1,6 @@
 # AgentDB v2.0.0-alpha.1 - Production Docker Image
 # Multi-stage build for testing and npm package validation
-# Supports: Node 18+, SQLite, better-sqlite3, HNSW, optional RuVector
+# Supports: Node 20.9.0+, SQLite, better-sqlite3, HNSW, optional RuVector
 
 # =============================================================================
 # Stage 1: Base Dependencies
