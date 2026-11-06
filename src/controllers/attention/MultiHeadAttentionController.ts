@@ -95,7 +95,7 @@ export class MultiHeadAttentionController {
       aggregation: 'average',
       ...config
     };
-    if (!Number.isInteger(this.config.numHeads) || this.config.numHeads! <= 0) {
+    if (config.numHeads !== undefined && (!Number.isInteger(config.numHeads) || config.numHeads <= 0)) {
       throw new Error('numHeads must be a positive integer');
     }
     if (config.headDim !== undefined && (!Number.isInteger(config.headDim) || config.headDim <= 0)) {
