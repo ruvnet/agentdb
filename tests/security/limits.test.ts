@@ -9,7 +9,7 @@
  * - Resource tracking
  */
 
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   ResourceTracker,
   RateLimiter,
@@ -425,7 +425,7 @@ describe('AgentDB v2 Security: Batch Limit Enforcement', () => {
 describe('AgentDB v2 Security: Resource Monitoring', () => {
   describe('logResourceUsage', () => {
     it('should log resource statistics', () => {
-      const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       logResourceUsage();
 
@@ -439,8 +439,8 @@ describe('AgentDB v2 Security: Resource Monitoring', () => {
       const tracker = new ResourceTracker();
       tracker.updateMemoryUsage(SECURITY_LIMITS.MAX_MEMORY_MB * 0.85);
 
-      const consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation();
-      const consoleLogSpy = jest.spyOn(console, 'log').mockImplementation();
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       logResourceUsage();
 

@@ -7,7 +7,7 @@
  * - db-fallback PRAGMA validation
  */
 
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase } from '../../src/db-fallback';
 import { BatchOperations } from '../../src/optimizations/BatchOperations';
 import { EmbeddingService } from '../../src/controllers/EmbeddingService';
