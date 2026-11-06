@@ -96,7 +96,6 @@ export class AttentionWASMManager {
   private async loadNAPIModule(): Promise<void> {
     try {
       // Try to import @ruvector/attention (NAPI bindings)
-      // @ts-expect-error - Optional dependency
       this.napiModule = await import('@ruvector/attention');
       console.error('✅ Loaded @ruvector/attention NAPI module');
     } catch (error) {
