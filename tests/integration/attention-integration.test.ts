@@ -2,17 +2,13 @@
  * @test Attention Mechanism Integration Tests
  * @description Comprehensive end-to-end tests for all attention mechanisms
  * @prerequisites
- *   - AgentDB initialized
- *   - RuVector native bindings available
- *   - Test database created
+ *   - None: exercises MemoryController and the attention controllers it owns
+ *     (getSelf/Cross/MultiHeadAttentionController) with an in-memory store
  * @coverage
  *   - Self-attention mechanisms
  *   - Cross-attention mechanisms
  *   - Multi-head attention
  *   - Memory controller integrations
- *   - CLI commands
- *   - MCP tools
- *   - Browser WASM loading
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';

@@ -22,12 +22,19 @@ const hasCli = fs.existsSync(CLI_PATH);
 if (!hasCli) {
   console.warn('[v1.6.0-features] built CLI missing; run `npm run build` to enable these tests');
 }
-// All CLI artifacts (including the default ./agentdb.db) land in a temp dir.
-const WORK_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'agentdb-v160-'));
+// All CLI artifacts (including the default ./agentdb.db) land in a temp dir,
+// created in beforeAll so a skipped (unbuilt) run leaves nothing behind.
+let WORK_DIR = '';
 
 describe.skipIf(!hasCli)('v1.6.0 New Features Regression Tests', () => {
-  const exportPath = path.join(WORK_DIR, 'test-export.json');
-  const importPath = path.join(WORK_DIR, 'test-import.db');
+  let exportPath = '';
+  let importPath = '';
+
+  beforeAll(() => {
+    WORK_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'agentdb-v160-'));
+    exportPath = path.join(WORK_DIR, 'test-export.json');
+    importPath = path.join(WORK_DIR, 'test-import.db');
+  });
 
   afterAll(() => {
     fs.rmSync(WORK_DIR, { recursive: true, force: true });
@@ -66,12 +73,13 @@ describe.skipIf(!hasCli)('v1.6.0 New Features Regression Tests', () => {
   });
 
   describe('Vector Search Command', () => {
-    const testDbPath = path.join(WORK_DIR, 'vector-search.db');
+    let testDbPath = '';
     let db: any;
     let embedder: EmbeddingService;
     let reflexion: ReflexionMemory;
 
     beforeAll(async () => {
+      testDbPath = path.join(WORK_DIR, 'vector-search.db');
       // Initialize database with test data
       await runCLI(['init', testDbPath]);
 
@@ -164,12 +172,13 @@ describe.skipIf(!hasCli)('v1.6.0 New Features Regression Tests', () => {
   });
 
   describe('Export/Import Commands', () => {
-    const testDbPath = path.join(WORK_DIR, 'export.db');
+    let testDbPath = '';
     let db: any;
     let embedder: EmbeddingService;
     let reflexion: ReflexionMemory;
 
     beforeAll(async () => {
+      testDbPath = path.join(WORK_DIR, 'export.db');
       // Create database with test data
       await runCLI(['init', testDbPath]);
 
@@ -254,12 +263,13 @@ describe.skipIf(!hasCli)('v1.6.0 New Features Regression Tests', () => {
   });
 
   describe('Stats Command', () => {
-    const testDbPath = path.join(WORK_DIR, 'stats.db');
+    let testDbPath = '';
     let db: any;
     let embedder: EmbeddingService;
     let reflexion: ReflexionMemory;
 
     beforeAll(async () => {
+      testDbPath = path.join(WORK_DIR, 'stats.db');
       await runCLI(['init', testDbPath]);
 
       db = await createDatabase(testDbPath);
