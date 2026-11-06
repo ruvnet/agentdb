@@ -43,6 +43,16 @@ async function loadRuvLLM(): Promise<boolean> {
   }
 }
 
+/** True when the RuvLLM engine has a language model loaded (needed for text generation). */
+function ruvllmHasModel(embeddingDim?: number): boolean {
+  const engine = getRuvLLMInstance({ embeddingDim: embeddingDim || 768 });
+  try {
+    return !!engine && typeof engine.isModelLoaded === 'function' && engine.isModelLoaded() === true;
+  } catch {
+    return false;
+  }
+}
+
 function getRuvLLMInstance(config?: { embeddingDim?: number }): any {
   if (!RuvLLMEngine) return null;
   if (!ruvllmInstance) {
@@ -123,16 +133,20 @@ export class LLMRouter {
    * Select default provider based on available API keys and installed packages
    */
   private selectDefaultProvider(): 'ruvllm' | 'openrouter' | 'gemini' | 'anthropic' | 'onnx' {
-    // Prefer RuvLLM for local inference (no API keys needed)
-    if (this.ruvllmAvailable) return 'ruvllm';
+    // Prefer RuvLLM for local inference (no API keys needed) when it can generate text
+    if (this.ruvllmCanGenerate) return 'ruvllm';
     if (process.env.OPENROUTER_API_KEY) return 'openrouter';
     if (process.env.GOOGLE_GEMINI_API_KEY) return 'gemini';
     if (process.env.ANTHROPIC_API_KEY) return 'anthropic';
     return 'onnx'; // Fallback to local ONNX models
   }
 
-  // Track RuvLLM availability (set during async init)
+  // Track RuvLLM availability (set during async init). The package provides
+  // embeddings, similarity and HNSW memory on its own; text generation needs a
+  // loaded language model (@ruvector/ruvllm >= 4 throws RUVLLM_NO_LANGUAGE_MODEL
+  // instead of returning placeholder text).
   private ruvllmAvailable: boolean = false;
+  private ruvllmCanGenerate: boolean = false;
 
   /**
    * Select default model for provider
@@ -174,9 +188,10 @@ export class LLMRouter {
    */
   async initialize(): Promise<void> {
     this.ruvllmAvailable = await loadRuvLLM();
+    this.ruvllmCanGenerate = this.ruvllmAvailable && ruvllmHasModel(this.config.embeddingDim);
 
-    // Re-select provider now that we know RuvLLM availability
-    if (this.ruvllmAvailable && !this.config.apiKey) {
+    // Re-select provider now that we know RuvLLM can generate
+    if (this.ruvllmCanGenerate && !this.config.apiKey) {
       // If no API keys configured, prefer RuvLLM
       const hasApiKeys = process.env.OPENROUTER_API_KEY ||
                          process.env.GOOGLE_GEMINI_API_KEY ||
@@ -241,7 +256,7 @@ export class LLMRouter {
       }
     } catch (error) {
       // Fallback to RuvLLM if available, otherwise simple response
-      if (this.ruvllmAvailable && provider !== 'ruvllm') {
+      if (this.ruvllmCanGenerate && provider !== 'ruvllm') {
         try {
           const response = await this.callRuvLLM(prompt, temperature, maxTokens);
           content = response.content;
@@ -291,39 +306,27 @@ export class LLMRouter {
     if (!engine) {
       throw new Error('RuvLLM not available. Install with: npm install @ruvector/ruvllm');
     }
-
-    try {
-      // Use RuvLLM's query method which includes routing and memory
-      const result = engine.query(prompt, {
-        temperature,
-        maxTokens,
-        useMemory: true,
-        useRouting: true
-      });
-
-      // Provide feedback for adaptive learning
-      if (this.config.learningEnabled !== false) {
-        engine.feedback({
-          queryId: result.queryId || 'default',
-          quality: 0.8,  // Base quality score
-          useful: true
-        });
-      }
-
-      return {
-        content: result.response || result.content || '',
-        tokensUsed: result.tokensUsed || prompt.split(' ').length + (result.response || '').split(' ').length,
-        cost: 0  // Local inference is free
-      };
-    } catch (error) {
-      // Fallback to simple generate if query fails
-      const content = engine.generate(prompt, { temperature, maxTokens });
-      return {
-        content,
-        tokensUsed: prompt.split(' ').length + content.split(' ').length,
-        cost: 0
-      };
+    if (!this.ruvllmCanGenerate) {
+      throw new Error('RuvLLM has no language model loaded; it cannot generate text');
     }
+
+    // QueryResponse: { text, requestId, promptTokens?, completionTokens?, ... }
+    const result = engine.query(prompt, { temperature, maxTokens });
+    const content: string = result.text ?? '';
+
+    // Feedback is keyed by the response's requestId and rated 1-5.
+    if (this.config.learningEnabled !== false && result.requestId) {
+      try {
+        engine.feedback({ requestId: result.requestId, rating: 4 });
+      } catch {
+        // learning signal is best-effort
+      }
+    }
+
+    const tokensUsed =
+      (result.promptTokens ?? 0) + (result.completionTokens ?? 0) ||
+      prompt.split(' ').length + content.split(' ').length;
+    return { content, tokensUsed, cost: 0 }; // local inference is free
   }
 
   /**
@@ -336,8 +339,10 @@ export class LLMRouter {
     if (!engine) return null;
 
     try {
+      // embed() returns number[]; `embedding.values` on an array is
+      // Array.prototype.values, which produced an empty Float32Array.
       const embedding = engine.embed(text);
-      return new Float32Array(embedding.values || embedding);
+      return Float32Array.from(Array.isArray(embedding) ? embedding : embedding?.values ?? []);
     } catch {
       return null;
     }
@@ -575,7 +580,7 @@ export class LLMRouter {
    */
   optimizeModelSelection(taskDescription: string, priority: 'quality' | 'balanced' | 'cost' | 'speed' | 'privacy'): LLMConfig {
     // Use RuvLLM for privacy/speed/cost if available
-    const useRuvLLM = this.ruvllmAvailable &&
+    const useRuvLLM = this.ruvllmCanGenerate &&
                       (priority === 'privacy' || priority === 'speed' || priority === 'cost');
 
     const recommendations: Record<string, Partial<LLMConfig>> = {
@@ -584,8 +589,8 @@ export class LLMRouter {
         model: 'claude-3-5-sonnet-20241022'
       },
       balanced: {
-        provider: this.ruvllmAvailable ? 'ruvllm' : 'openrouter',
-        model: this.ruvllmAvailable ? 'ruvllm-sona' : 'anthropic/claude-3.5-sonnet'
+        provider: this.ruvllmCanGenerate ? 'ruvllm' : 'openrouter',
+        model: this.ruvllmCanGenerate ? 'ruvllm-sona' : 'anthropic/claude-3.5-sonnet'
       },
       cost: {
         provider: useRuvLLM ? 'ruvllm' : 'gemini',
@@ -618,7 +623,7 @@ export class LLMRouter {
    * Check if provider is available (has API key or is local)
    */
   isProviderAvailable(provider: 'ruvllm' | 'openrouter' | 'gemini' | 'anthropic' | 'onnx'): boolean {
-    if (provider === 'ruvllm') return this.ruvllmAvailable;
+    if (provider === 'ruvllm') return this.ruvllmCanGenerate;
     if (provider === 'onnx') return true; // Always available
 
     const apiKey = this.getApiKey(provider);
@@ -630,7 +635,7 @@ export class LLMRouter {
    */
   getAvailableProviders(): string[] {
     const providers: string[] = [];
-    if (this.ruvllmAvailable) providers.push('ruvllm');
+    if (this.ruvllmCanGenerate) providers.push('ruvllm');
     if (process.env.OPENROUTER_API_KEY) providers.push('openrouter');
     if (process.env.GOOGLE_GEMINI_API_KEY) providers.push('gemini');
     if (process.env.ANTHROPIC_API_KEY) providers.push('anthropic');

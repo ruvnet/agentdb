@@ -60,6 +60,7 @@ export class NativeAccelerator {
   private _graphCypher = false;
   private _coreBatchInsert = false;
   private _ewcManager: any = null;
+  private _ewcTaskSeq = 0;
   private _sqLoad: ((params: Uint8Array, dim: number) => boolean) | null = null;
   private _dequantI8: ((src: Uint8Array, dst: Float32Array, count: number) => boolean) | null = null;
   private _pqLoadCodebook: ((codebook: Uint8Array, m: number, k: number) => boolean) | null = null;
@@ -409,8 +410,19 @@ export class NativeAccelerator {
     return 0;
   }
 
+  /**
+   * Register `params` as the consolidated weights of a new task, so later
+   * `ewcPenalty` calls penalise drift away from them. @ruvector/ruvllm's
+   * EwcManager has no `updateFisher`; `registerTask(id, weights)` derives the
+   * Fisher diagonal itself (|w| * lambda), so `importance` only gates the
+   * update: a non-positive or non-finite importance registers nothing.
+   */
   ewcUpdateFisher(params: Float32Array, importance: number): boolean {
-    if (this._ewcManager) { try { this._ewcManager.updateFisher(Array.from(params), importance); return true; } catch { /* fallback */ } }
+    if (!this._ewcManager || !(importance > 0) || !Number.isFinite(importance)) return false;
+    try {
+      this._ewcManager.registerTask(`agentdb-task-${++this._ewcTaskSeq}`, Array.from(params));
+      return true;
+    } catch { /* fallback */ }
     return false;
   }
 

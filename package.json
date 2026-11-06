@@ -166,6 +166,7 @@
     "@modelcontextprotocol/sdk": "^1.20.1",
     "@opentelemetry/api": "^1.9.0",
     "ajv": "^8.18.0",
+    "semver": "^7.7.0",
     "sql.js": "^1.13.0"
   },
   "devDependencies": {
@@ -203,7 +204,7 @@
     "@ruvector/mincut-wasm": "^2.3.0",
     "@ruvector/rabitq-wasm": "^0.1.2",
     "@ruvector/router": "^0.1.15",
-    "@ruvector/ruvllm": "^2.5.1",
+    "@ruvector/ruvllm": "^4.1.0",
     "@ruvector/rvf": "^0.2.3",
     "@ruvector/rvf-node": "^0.1.7",
     "@ruvector/rvf-solver": "^0.1.7",

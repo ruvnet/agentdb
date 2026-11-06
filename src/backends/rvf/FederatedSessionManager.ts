@@ -154,13 +154,13 @@ export class FederatedSessionManager {
 
       // Initialize LoRA manager for task-specific adapters
       instance.loraManager = new ruvllm.LoraManager();
-      // Create a default adapter
+      // Create a default adapter. LoraManager.create(id, config, inputDim,
+      // outputDim) takes the dimensions positionally; inside the config they
+      // were ignored and the adapter defaulted to 256 x 256.
       instance.loraManager.create('default', {
-        inputDim: config.dimension,
-        outputDim: config.dimension,
         rank: loraRank,
         alpha: config.loraAlpha ?? loraRank * 2,
-      });
+      }, config.dimension, config.dimension);
       instance.loraManager.activate('default');
     } catch (error) {
       throw new Error(
@@ -321,11 +321,9 @@ export class FederatedSessionManager {
 
     const safeRank = Math.min(Math.max(1, rank ?? this.config.loraRank ?? 4), MAX_LORA_RANK);
     this.loraManager.create(name, {
-      inputDim: this.dim,
-      outputDim: this.dim,
       rank: safeRank,
       alpha: safeRank * 2,
-    });
+    }, this.dim, this.dim);
   }
 
   /**
