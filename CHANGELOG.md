@@ -5,6 +5,22 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.1] - 2026-11-06
+
+### Fixed
+
+- **`simulation/tests/latent-space/self-organizing-hnsw.test.ts` no longer hangs.** The scenario picked each node's neighbors by scanning and sorting every vector, so building the graph was O(n² log n); at the configured 100k/1M nodes (`AGENTDB_BENCH_FULL=1`, or any checkout before #44) it never finished. The loop was synchronous, so the 600 s hook timeout could not fire and the run held its vitest forks at 100% CPU (one host: four forks for 10 h). Neighbors are now chosen from at most 512 sampled candidates, the configured `graphSizes` are `[5000, 15000]`, and the scenario yields to the event loop and throws once its 540 s budget (`SIMULATION_TIME_BUDGET_MS`) is spent. With `AGENTDB_BENCH_FULL=1` the file now finishes in 179 s on a 32-thread host at load average 42; the default run takes about 10 s. The test's assertions get a 10 s per-test timeout.
+- `vitest.bench.config.ts` runs one file at a time (`fileParallelism: false`): the suites are CPU-bound and measure speed, and a runaway suite now holds one core. Both vitest configs set `teardownTimeout: 30000`.
+- `WASMVectorSearch` dropped a `require.resolve('@ruvector/wasm/reasoningbank_wasm.js')` probe. `require` is undefined in this ES module, so the probe always threw into its catch, and `@ruvector/wasm` does not ship that file. The other WASM search paths are unchanged.
+
+### Security
+
+- `ui/` (the demo app, not part of the npm package): `@remix-run/router` 1.23.0 → 1.23.4 and `react-router`/`react-router-dom` 6.30.1 → 6.30.6 via `npm audit fix` (high: open redirect via protocol-relative paths). `vite` and `zod` advisories in `ui/` need major upgrades and are not changed here.
+
+### Not changed
+
+- `@ruvector/rvf` stays at `^0.2.3`. 0.4.x rejects per-vector metadata in `ingestBatch` (`RvfErrorCode.MetadataNotSupported`, ruvector#704), and `RvfBackend.insert` passes metadata, so a plain insert-with-metadata fails on 0.4.6.
+
 ## [3.6.0] - 2026-11-06
 
 Follow-ups to 3.5.0 (#43, #44, #46).

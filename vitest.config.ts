@@ -42,6 +42,7 @@ export default defineConfig({
     },
     testTimeout: 30000,
     hookTimeout: 30000,
+    teardownTimeout: 30000,
     setupFiles: ['./tests/setup.ts'],
     mockReset: true,
     restoreMocks: true,

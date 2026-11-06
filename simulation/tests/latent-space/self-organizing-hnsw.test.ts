@@ -14,22 +14,27 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { SPEED_GATES, itSpeed, benchSize } from '../../../tests/benchmarks/helpers/speed-gate';
-import { selfOrganizingHNSWScenario } from '../../scenarios/latent-space/self-organizing-hnsw';
+import {
+  selfOrganizingHNSWScenario,
+  SIMULATION_TIME_BUDGET_MS,
+} from '../../scenarios/latent-space/self-organizing-hnsw';
 import type { SimulationReport } from '../../types';
 
-describe('SelfOrganizingHNSW', () => {
+// Every assertion below only reads the precomputed report.
+describe('SelfOrganizingHNSW', { timeout: 10_000 }, () => {
   let report: SimulationReport;
 
   beforeAll(async () => {
     // The configured sizes ran for over 600 s (#44); small sizes by default,
     // AGENTDB_BENCH_FULL=1 restores them. Assertions on selfOrganizingHNSWScenario.config
-    // still see the configured values.
+    // still see the configured values. The scenario yields to the event loop and
+    // throws once SIMULATION_TIME_BUDGET_MS is spent, so this timeout can fire.
     const config = selfOrganizingHNSWScenario.config;
     report = await selfOrganizingHNSWScenario.run({
       ...config,
       graphSizes: benchSize(config.graphSizes, [1000]),
     });
-  }, 600000);
+  }, SIMULATION_TIME_BUDGET_MS + 30_000);
 
   // Result shape: `evolution` is the per-day timeline array and the M/ef
   // history is in `parameterEvolution`; `parameters` is the strategy's

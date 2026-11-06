@@ -21,5 +21,9 @@ export default defineConfig({
     exclude: [...configDefaults.exclude],
     testTimeout: 600_000,
     hookTimeout: 600_000,
+    teardownTimeout: 30_000,
+    // One file at a time: these suites are CPU-bound and measure speed, and a
+    // runaway suite then holds one core instead of one per fork.
+    fileParallelism: false,
   },
 });
