@@ -121,7 +121,7 @@ await service.initialize();
 #### sparsify()
 
 ```typescript
-async sparsify(sourceNode: number, edges: GraphEdges): Promise<SparsificationResult>
+async sparsify(sourceNode: number, edges: GraphInput): Promise<SparsificationResult>
 ```
 
 Sparsifies graph according to configuration.
@@ -142,7 +142,7 @@ const result = await service.sparsify(0, graph);
 ```typescript
 async pprSparsification(
   sourceNode: number,
-  edges: GraphEdges,
+  edges: GraphInput,
   topK: number,
   alpha?: number
 ): Promise<SparsificationResult>
@@ -167,7 +167,7 @@ const result = await service.pprSparsification(0, graph, 5, 0.15);
 ```typescript
 async randomWalkSparsification(
   sourceNode: number,
-  edges: GraphEdges,
+  edges: GraphInput,
   topK: number,
   numWalks?: number,
   walkLength?: number
@@ -193,7 +193,7 @@ const result = await service.randomWalkSparsification(0, graph, 5, 200, 15);
 
 ```typescript
 async spectralSparsification(
-  edges: GraphEdges,
+  edges: GraphInput,
   topK: number
 ): Promise<SparsificationResult>
 ```
@@ -239,21 +239,31 @@ Resets configuration to defaults.
 ### GraphEdges
 
 ```typescript
-interface GraphEdges {
-  [nodeId: number]: number[];
-}
+type GraphEdges = Array<number[] | undefined>;
 ```
 
-Adjacency list representation. Keys are node IDs, values are arrays of neighbor IDs.
+Adjacency list indexed by node ID: `edges[i]` holds the neighbour IDs of node `i`. This is the canonical form.
 
 **Example:**
 ```typescript
-const graph: GraphEdges = {
-  0: [1, 2],    // Node 0 connects to 1 and 2
-  1: [0, 2],    // Node 1 connects to 0 and 2
-  2: [0, 1],    // Node 2 connects to 0 and 1
-};
+const graph: GraphEdges = [
+  [1, 2],    // Node 0 connects to 1 and 2
+  [0, 2],    // Node 1 connects to 0 and 2
+  [0, 1],    // Node 2 connects to 0 and 1
+];
 ```
+
+### GraphInput
+
+Every method that takes a graph (here and in `MincutService`) also accepts an object keyed by node ID and converts it with `normalizeGraphEdges`:
+
+```typescript
+type GraphInput = GraphEdges | Record<number, number[] | undefined>;
+
+await service.sparsify(0, { 0: [1, 2], 1: [0, 2], 2: [0, 1] });
+```
+
+The node count is one more than the largest ID seen as a key or a neighbour; IDs without a key have no neighbours. Keys must be non-negative integers below 10,000,000, and values must be arrays.
 
 ### SparsificationResult
 

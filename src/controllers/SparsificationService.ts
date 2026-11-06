@@ -21,11 +21,12 @@
  * @version 3.0.0-alpha.5
  */
 
-import type { GraphEdges } from '../types/graph.js';
+import type { GraphEdges, GraphInput } from '../types/graph.js';
+import { normalizeGraphEdges } from '../utils/graph-edges.js';
 import { loadPprBackend, toNativeAdjacency, type PprBackend } from './integrations/PprNativeAdapter.js';
 
 // Re-export for convenience
-export type { GraphEdges };
+export type { GraphEdges, GraphInput };
 
 export interface SparsificationConfig {
   /** Sparsification method */
@@ -113,10 +114,11 @@ export class SparsificationService {
    */
   async pprSparsification(
     sourceNode: number,
-    edges: GraphEdges,
+    input: GraphInput,
     topK: number,
     alpha: number = 0.15
   ): Promise<SparsificationResult> {
+    const edges = normalizeGraphEdges(input);
     const startTime = performance.now();
 
     if (!this.initialized) await this.initialize();
@@ -158,11 +160,12 @@ export class SparsificationService {
    */
   async randomWalkSparsification(
     sourceNode: number,
-    edges: GraphEdges,
+    input: GraphInput,
     topK: number,
     numWalks: number = 100,
     walkLength: number = 10
   ): Promise<SparsificationResult> {
+    const edges = normalizeGraphEdges(input);
     const startTime = performance.now();
     const visitCounts = new Map<number, number>();
 
@@ -221,9 +224,10 @@ export class SparsificationService {
    * @returns Sparsification result with top-k nodes
    */
   async spectralSparsification(
-    edges: GraphEdges,
+    input: GraphInput,
     topK: number
   ): Promise<SparsificationResult> {
+    const edges = normalizeGraphEdges(input);
     const startTime = performance.now();
 
     // No published spectral sparsifier binding yet (ruvector-sparsifier is crates.io only):
@@ -240,8 +244,9 @@ export class SparsificationService {
    */
   async sparsify(
     sourceNode: number,
-    edges: GraphEdges
+    input: GraphInput
   ): Promise<SparsificationResult> {
+    const edges = normalizeGraphEdges(input);
     if (!this.initialized) {
       await this.initialize();
     }

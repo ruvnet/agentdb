@@ -46,6 +46,7 @@ export type { SyncCoordinatorConfig, SyncState, SyncReport } from './SyncCoordin
 export type { AttentionConfig, AttentionResult, AttentionStats } from './AttentionService.js';
 export type {
   GraphEdges,
+  GraphInput,
   SparsificationConfig,
   SparsificationResult
 } from './SparsificationService.js';

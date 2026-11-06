@@ -14,7 +14,8 @@
  * Goal: 50-80% memory reduction through dynamic graph partitioning
  */
 
-import type { GraphEdges } from '../types/graph.js';
+import type { GraphEdges, GraphInput } from '../types/graph.js';
+import { normalizeGraphEdges } from '../utils/graph-edges.js';
 import { loadMincutWasm, wasmGlobalMincut, undirectedEdges, type MincutWasmModule } from './integrations/MincutWasmAdapter.js';
 
 export interface MincutConfig {
@@ -68,7 +69,8 @@ export class MincutService {
   /**
    * Stoer-Wagner mincut algorithm
    */
-  async stoerWagnerMincut(edges: GraphEdges): Promise<MincutResult> {
+  async stoerWagnerMincut(input: GraphInput): Promise<MincutResult> {
+    const edges = normalizeGraphEdges(input);
     const cacheKey = `sw-${this.hashEdges(edges)}`;
     if (this.partitionCache.has(cacheKey)) {
       return this.partitionCache.get(cacheKey)!;
@@ -95,9 +97,10 @@ export class MincutService {
    * Karger's randomized mincut
    */
   async kargerMincut(
-    edges: GraphEdges,
+    input: GraphInput,
     iterations: number = 100
   ): Promise<MincutResult> {
+    const edges = normalizeGraphEdges(input);
     let bestCut: MincutResult | null = null;
 
     for (let i = 0; i < iterations; i++) {
@@ -115,10 +118,11 @@ export class MincutService {
    * Flow-based mincut (max-flow min-cut theorem)
    */
   async flowBasedMincut(
-    edges: GraphEdges,
+    input: GraphInput,
     source: number,
     sink: number
   ): Promise<MincutResult> {
+    const edges = normalizeGraphEdges(input);
     // Use Ford-Fulkerson algorithm
     return this.fordFulkersonMincut(edges, source, sink);
   }
@@ -126,7 +130,8 @@ export class MincutService {
   /**
    * Partition graph based on configuration
    */
-  async partition(edges: GraphEdges): Promise<MincutResult> {
+  async partition(input: GraphInput): Promise<MincutResult> {
+    const edges = normalizeGraphEdges(input);
     let result: MincutResult;
     switch (this.config.algorithm) {
       case 'stoer-wagner':
@@ -152,7 +157,8 @@ export class MincutService {
    * quadratic in part size) need bounded parts. cutEdges and cutSize are
    * recomputed over all parts, each undirected edge counted once.
    */
-  boundPartitions(result: MincutResult, edges: GraphEdges, maxSize: number): MincutResult {
+  boundPartitions(result: MincutResult, input: GraphInput, maxSize: number): MincutResult {
+    const edges = normalizeGraphEdges(input);
     const limit = Math.max(1, Math.floor(maxSize));
     if (result.partitions.every((p) => p.length <= limit)) return result;
     const partitions: number[][] = [];
@@ -204,7 +210,7 @@ export class MincutService {
    */
   getPartitionStats(
     result: MincutResult,
-    edges: GraphEdges
+    input: GraphInput
   ): {
     numPartitions: number;
     avgPartitionSize: number;
@@ -212,6 +218,7 @@ export class MincutService {
     minPartitionSize: number;
     cutRatio: number;
   } {
+    const edges = normalizeGraphEdges(input);
     const sizes = result.partitions.map((p) => p.length);
     const totalEdges = edges.reduce((sum, neighbors) => sum + (neighbors?.length || 0), 0) / 2;
 

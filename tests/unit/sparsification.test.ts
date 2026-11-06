@@ -14,16 +14,18 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   SparsificationService,
   type GraphEdges,
+  type GraphInput,
   type SparsificationConfig,
   type SparsificationResult,
 } from '../../src/controllers/SparsificationService.js';
+import { normalizeGraphEdges } from '../../src/utils/graph-edges.js';
 
 describe('SparsificationService', () => {
   let service: SparsificationService;
 
   // Test graph: Simple linear chain
   // 0 -> 1 -> 2 -> 3 -> 4
-  const linearChain: GraphEdges = {
+  const linearChain: GraphInput = {
     0: [1],
     1: [2],
     2: [3],
@@ -33,7 +35,7 @@ describe('SparsificationService', () => {
 
   // Test graph: Star topology
   // 0 is hub connected to 1, 2, 3, 4
-  const starGraph: GraphEdges = {
+  const starGraph: GraphInput = {
     0: [1, 2, 3, 4],
     1: [0],
     2: [0],
@@ -43,7 +45,7 @@ describe('SparsificationService', () => {
 
   // Test graph: Cycle
   // 0 -> 1 -> 2 -> 3 -> 0
-  const cycleGraph: GraphEdges = {
+  const cycleGraph: GraphInput = {
     0: [1],
     1: [2],
     2: [3],
@@ -51,7 +53,7 @@ describe('SparsificationService', () => {
   };
 
   // Test graph: Dense graph with clear clustering
-  const denseGraph: GraphEdges = {
+  const denseGraph: GraphInput = {
     0: [1, 2, 3],
     1: [0, 2],
     2: [0, 1, 3],
@@ -112,7 +114,13 @@ describe('SparsificationService', () => {
 
       expect(result).toBeDefined();
       expect(result.topKIndices).toHaveLength(3);
-      expect(result.topKIndices[0]).toBe(0); // Source should have highest score
+      expect(result.topKIndices).toContain(0);
+      // The source outranks every node that has out-edges. Node 4 is a sink:
+      // the native backends keep a dangling node's mass on it (ADR-018), so it
+      // can outrank the source there; the JavaScript fallback drops that mass.
+      for (const node of [1, 2, 3]) {
+        expect(result.scores[0]).toBeGreaterThan(result.scores[node]);
+      }
       expect(result.scores).toBeInstanceOf(Float32Array);
       expect(result.method).toMatch(/ppr/);
       expect(result.executionTimeMs).toBeGreaterThan(0);
@@ -143,7 +151,7 @@ describe('SparsificationService', () => {
     });
 
     it('should handle disconnected nodes gracefully', async () => {
-      const disconnectedGraph: GraphEdges = {
+      const disconnectedGraph: GraphInput = {
         0: [1],
         1: [],
         2: [3], // Disconnected component
@@ -224,7 +232,7 @@ describe('SparsificationService', () => {
     });
 
     it('should terminate on isolated nodes', async () => {
-      const isolatedGraph: GraphEdges = {
+      const isolatedGraph: GraphInput = {
         0: [1],
         1: [], // Dead end
       };
@@ -263,7 +271,7 @@ describe('SparsificationService', () => {
     });
 
     it('should handle uniform degree graphs', async () => {
-      const uniformGraph: GraphEdges = {
+      const uniformGraph: GraphInput = {
         0: [1],
         1: [2],
         2: [0],
@@ -341,7 +349,7 @@ describe('SparsificationService', () => {
     });
 
     it('should handle k larger than graph size', async () => {
-      const smallGraph: GraphEdges = {
+      const smallGraph: GraphInput = {
         0: [1],
         1: [],
       };
@@ -367,14 +375,14 @@ describe('SparsificationService', () => {
 
   describe('Edge Cases', () => {
     it('should handle empty graph', async () => {
-      const emptyGraph: GraphEdges = {};
+      const emptyGraph: GraphInput = {};
 
       const result = await service.pprSparsification(0, emptyGraph, 1, 0.15);
       expect(result).toBeDefined();
     });
 
     it('should handle single-node graph', async () => {
-      const singleNode: GraphEdges = {
+      const singleNode: GraphInput = {
         0: [],
       };
 
@@ -383,7 +391,7 @@ describe('SparsificationService', () => {
     });
 
     it('should handle self-loops', async () => {
-      const selfLoopGraph: GraphEdges = {
+      const selfLoopGraph: GraphInput = {
         0: [0, 1],
         1: [1],
       };
@@ -393,7 +401,7 @@ describe('SparsificationService', () => {
     });
 
     it('should handle large node IDs', async () => {
-      const sparseGraph: GraphEdges = {
+      const sparseGraph: GraphInput = {
         100: [200],
         200: [300],
         300: [],
@@ -471,6 +479,33 @@ describe('SparsificationService', () => {
       expect(result.scores[0]).toBe(4);
       // Leaf nodes have degree 1
       expect(result.scores[1]).toBe(1);
+    });
+  });
+
+  describe('Graph input forms', () => {
+    const asArray: GraphEdges = [[1, 2, 3], [0, 2], [0, 1, 3], [0, 2, 4, 5], [3, 5], [3, 4]];
+
+    it('scores an object-keyed graph and the same adjacency array identically', async () => {
+      for (const method of ['ppr', 'random-walk', 'spectral', 'degree-based'] as const) {
+        service.updateConfig({ method, topK: 3 });
+        const fromObject = await service.sparsify(0, denseGraph);
+        const fromArray = await service.sparsify(0, asArray);
+        if (method !== 'random-walk') {
+          expect(Array.from(fromObject.scores)).toEqual(Array.from(fromArray.scores));
+        }
+        expect(fromObject.scores).toHaveLength(6);
+      }
+    });
+
+    it('counts nodes that appear only as neighbours', () => {
+      expect(normalizeGraphEdges({ 0: [3] })).toEqual([[3], [], [], []]);
+    });
+
+    it('rejects input that is neither an array nor an object keyed by node id', () => {
+      expect(() => normalizeGraphEdges('0:1' as any)).toThrow(TypeError);
+      expect(() => normalizeGraphEdges({ a: [1] } as any)).toThrow(/non-negative integer/);
+      expect(() => normalizeGraphEdges({ 0: 1 } as any)).toThrow(/must be an array/);
+      expect(() => normalizeGraphEdges({ 2e7: [] })).toThrow(RangeError);
     });
   });
 });
