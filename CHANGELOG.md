@@ -39,6 +39,8 @@ Dependency floor release. agentdb is a dependency of agentic-flow and ruflo, so 
 - Importing `agentdb/cli` ran the CLI and exited the host process.
 - CLI `vector-search` ignored its database path and decoded 384-dim embeddings as 1536 bytes; `import` dropped embeddings written by `export`.
 - The SQL validator accepts `table_info` only as `table_info(identifier)`.
+- `HNSWLibBackend` did not await hnswlib-node 3's async index read/write, refused to re-insert a removed id, and recorded sub-millisecond searches as 0 ms. `HNSWIndex.search` threw when k exceeded the index size; k is now capped.
+- `agentdb init` from a source checkout looked for schema files that only exist in the built package and created a database without the `episodes` table; it now uses the inlined schemas.
 - Test suite: 38 sparsification tests passed object graphs to the array API; other suites used config keys, controllers and imports (`@jest/globals`) that do not exist. Plugin and real-browser suites are excluded from the default vitest run.
 
 ## [3.4.0] - 2026-11-05
