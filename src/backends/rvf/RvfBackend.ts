@@ -116,6 +116,7 @@ export class RvfBackend implements VectorBackendAsync {
 
   // Sync insert queue: buffers sync insert() calls, flushed on threshold or explicit flush()
   private pending: Array<{ id: string; vector: Float32Array; metadata?: Record<string, unknown> }> = [];
+  private flushChain: Promise<void> = Promise.resolve();
   private batchThreshold: number;
 
   // Cached stats (updated on flush/search)
@@ -429,20 +430,33 @@ export class RvfBackend implements VectorBackendAsync {
   }
 
   async flush(): Promise<void> {
+    // Serialize flushes: an auto-flush from insert() and an explicit flush()
+    // (or a search) must not ingest the same queued items twice.
+    const run = this.flushChain.then(() => this.flushPending());
+    this.flushChain = run.catch(() => undefined);
+    return run;
+  }
+
+  /**
+   * Ingest queued writes in sub-batches of MAX_BATCH_SIZE. An item leaves the
+   * queue only after its batch is accepted, so a failed ingest keeps it queued
+   * for the next flush instead of dropping it (#46).
+   */
+  private async flushPending(): Promise<void> {
     if (this.pending.length === 0) return;
     this.ensureInitialized();
 
-    const batch = this.pending.splice(0, this.pending.length);
-    const entries = batch.map((item) => ({
-      id: item.id,
-      vector: item.vector,
-      metadata: item.metadata,
-    }));
-
-    // Flush in sub-batches of MAX_BATCH_SIZE for safety
-    for (let i = 0; i < entries.length; i += MAX_BATCH_SIZE) {
-      const chunk = entries.slice(i, i + MAX_BATCH_SIZE);
-      const result = await this.db.ingestBatch(chunk);
+    const queue = this.pending;
+    while (queue.length > 0 && this.pending === queue) {
+      const chunk = queue.slice(0, MAX_BATCH_SIZE);
+      const result = await this.db.ingestBatch(chunk.map((item) => ({
+        id: item.id,
+        vector: item.vector,
+        metadata: item.metadata,
+      })));
+      // close() replaces the queue; don't splice the new one.
+      if (this.pending !== queue) break;
+      queue.splice(0, chunk.length);
       this.cachedCount += result.accepted ?? chunk.length;
     }
 

@@ -5,6 +5,40 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2026-11-06
+
+Follow-ups to 3.5.0 (#43, #44, #46).
+
+### Changed
+
+- **`AttentionService` validates its inputs** (#43). `multiHeadAttention`, `flashAttention`, `flashAttentionV2`, `linearAttention`, `hyperbolicAttention`, `fusedAttention` and `moeAttention` now reject, instead of returning output for:
+  - an empty query, key or value;
+  - a buffer whose length is not a whole number of `embedDim` rows;
+  - key and value with different row counts (query may differ: cross-attention). Previously this returned output; it now throws `dimension mismatch`;
+  - NaN or ±Infinity anywhere in the input, and a non-finite hyperbolic `curvature`;
+  - more than `maxAttentionScores` scores (queryRows × keyRows × numHeads, default 2^25) for the quadratic mechanisms. A 2048 × 2048 × 12-head call used to run for minutes and end in a stack error; it now fails at once with a size-limit error. `linearAttention` is not capped. Raise the limit with the new `maxAttentionScores` config option.
+  - any call after `dispose()` (previously the service silently re-initialized).
+  The config must satisfy `embedDim === numHeads × headDim` with positive integers. `sparseAttention` and `partitionedAttention` check their query for emptiness and finiteness only; their internal dense fallback is unchanged, so a query sized to the node count still works.
+- `AttentionService` times each call with `performance.now()` instead of shared `performance.mark` names, so concurrent calls and concurrent `initialize()` across instances no longer read each other's measurements.
+- **`@ruvector/sona` ^0.1.11** (was ^0.1.4). 0.1.11 only adds `SonaEngine.forceLearnAsync`.
+- Benchmark and simulation suites (`benchmarks/`, `simulation/`, `tests/benchmarks/`) are no longer part of the default `vitest` run (#44). `npm run test:bench` and the `benchmark:adr072*` scripts run them with `vitest.bench.config.ts`. The suites were brought up to date: the ADR-072 graph generator emits the adjacency array `SparsificationService`/`MincutService` accept (it built a COO object they never took); `ruvector-performance` uses the current exports (`VectorDb`, `kHopNeighbors`, `differentiableSearch()`) and no longer hangs on a swallowed error; the simulation tests read the fields the scenarios actually report. Absolute speed thresholds are skipped when `CI` (or `AGENTDB_SKIP_SPEED_GATES=1`) is set; long simulations use small sizes unless `AGENTDB_BENCH_FULL=1`. Tests the scenarios cannot satisfy are skipped with the reason. With `CI=1` all 12 files pass (287 passed, 16 skipped).
+- Claude Code plugin 3.6.0: `.mcp.json` starts `agentdb@3.6.0` (was 3.4.0).
+
+### Fixed
+
+- `RvfBackend.flush()` removed queued writes before the ingest ran, so a failed `ingestBatch` (including the fire-and-forget auto-flush from `insert()`) dropped them. Items now leave the queue only after their batch is accepted, and flushes are serialized so overlapping flushes don't ingest an item twice (#46).
+
+### Not changed: `@ruvector/rvf` stays ^0.2.3
+
+Re-evaluated against 0.4.3 (#46). Measured with the 0.2.3 and 0.4.3 SDKs side by side on the native backend:
+
+- 0.4.3 still rejects non-empty per-vector metadata (`RvfError` 65284, "Per-vector metadata is not yet supported by this SDK (see issue #704)"). 0.2.3 accepts it and silently drops it, so no metadata is lost by moving, but every `metadata:` passed to `RvfBackend` would have to be stripped and the metadata filter path stays unusable.
+- The first 0.4.3 write to a 0.2.3 store still makes it unreadable to 0.2.3 (`Segment hash verification failed: InvalidChecksum`). A store 0.4.3 creates is also unreadable to 0.2.3.
+- 0.4.3 persists the cosine metric for a store it creates (distance 0 for a scaled copy of the query), but a 0.2.3 store upgraded in place keeps scoring with squared L2 (distance 5 for the same pair, before and after the 0.4.3 write).
+- The SDK has no call that returns stored vectors: `query()` returns `{ id, distance }` and `exportBytes()` returns the file. A read-old, write-new migration, which is the only way to give old stores the cosine metric, can't be written against it.
+
+So moving now would be a one-way format change that doesn't fix old stores' metric, and still drops metadata. The move waits for an rvf release with durable metadata (#704) and a way to read vectors back. Note that `ruvector` 0.3.12+ (an optional dependency) already installs its own nested `@ruvector/rvf` ^0.4.2; agentdb's `RvfBackend` doesn't use it.
+
 ## [3.5.0] - 2026-11-05
 
 Dependency floor release. agentdb is a dependency of agentic-flow and ruflo, so its ranges decide what the ecosystem installs.

@@ -581,4 +581,59 @@ describe('AttentionService Edge Cases', () => {
       await expect(service.multiHeadAttention(query, key, value)).rejects.toThrow(/disposed|initialized/i);
     });
   });
+
+  describe('Size limit and validation scope (#43)', () => {
+    const rows = (n: number, dim: number) => {
+      const a = new Float32Array(n * dim);
+      for (let i = 0; i < a.length; i++) a[i] = Math.random();
+      return a;
+    };
+
+    it('rejects calls above maxAttentionScores before computing', async () => {
+      const small = new AttentionService({ embedDim: 64, numHeads: 4, headDim: 16, maxAttentionScores: 100 });
+      await small.initialize();
+      try {
+        // 8 x 8 rows x 4 heads = 256 scores > 100
+        await expect(small.multiHeadAttention(rows(8, 64), rows(8, 64), rows(8, 64))).rejects.toThrow(/size limit/);
+        // 4 x 4 x 4 = 64 scores: allowed
+        const ok = await small.multiHeadAttention(rows(4, 64), rows(4, 64), rows(4, 64));
+        expect(ok.output.length).toBe(4 * 64);
+      } finally {
+        await small.dispose();
+      }
+    });
+
+    it('does not apply the quadratic limit to linearAttention', async () => {
+      const small = new AttentionService({ embedDim: 64, numHeads: 4, headDim: 16, maxAttentionScores: 100 });
+      await small.initialize();
+      try {
+        const out = await small.linearAttention(rows(8, 64), rows(8, 64), rows(8, 64));
+        expect(out.output.length).toBe(8 * 64);
+      } finally {
+        await small.dispose();
+      }
+    });
+
+    it('validates the other mechanisms too', async () => {
+      const bad = rows(1, 768);
+      bad[5] = Number.NaN;
+      const ok = rows(1, 768);
+      await expect(service.flashAttention(bad, ok, ok)).rejects.toThrow(/NaN/);
+      await expect(service.linearAttention(ok, ok, new Float32Array(100))).rejects.toThrow(/dimension/);
+      await expect(service.moeAttention(new Float32Array(0), ok, ok)).rejects.toThrow(/empty/);
+      await expect(service.hyperbolicAttention(ok, ok, ok, Number.NaN)).rejects.toThrow(/curvature/);
+    });
+
+    it('rejects a non-integer or zero-head config', () => {
+      expect(() => new AttentionService({ embedDim: 768, numHeads: 12.5, headDim: 64 })).toThrow(/integer/);
+      expect(() => new AttentionService({ embedDim: 64, numHeads: 4, headDim: 16, maxAttentionScores: 0 })).toThrow(/maxAttentionScores/);
+    });
+
+    it('rejects initialize() after dispose()', async () => {
+      const s2 = new AttentionService({ embedDim: 64, numHeads: 4, headDim: 16 });
+      await s2.initialize();
+      await s2.dispose();
+      await expect(s2.initialize()).rejects.toThrow(/disposed/);
+    });
+  });
 });

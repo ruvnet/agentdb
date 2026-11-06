@@ -9,177 +9,216 @@
  * - SDK integration: ReflexionMemory, SkillLibrary, etc.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { performance } from 'perf_hooks';
+import { SPEED_GATES } from '../tests/benchmarks/helpers/speed-gate';
 
 const BENCH_DIR = path.join(process.cwd(), 'bench-data');
 const RESULTS: Record<string, any> = {};
 
-// Ensure benchmark directory exists
+// Ensure benchmark directory exists (results JSON is written there)
 if (!fs.existsSync(BENCH_DIR)) {
   fs.mkdirSync(BENCH_DIR, { recursive: true });
 }
 
-/**
- * Benchmark helper
- */
-function benchmark(name: string, fn: () => Promise<void> | void, iterations: number = 1): Promise<number> {
-  return new Promise(async (resolve) => {
-    const start = performance.now();
+// Databases go in a fresh directory per run. Fixed paths kept state between
+// runs (duplicate node ids), and VectorDb without storagePath writes
+// ./ruvector.db in the working directory.
+const DB_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'agentdb-ruvector-bench-'));
 
-    for (let i = 0; i < iterations; i++) {
-      await fn();
-    }
-
-    const end = performance.now();
-    const duration = end - start;
-    const avgDuration = duration / iterations;
-    const opsPerSec = iterations / (duration / 1000);
-
-    RESULTS[name] = {
-      iterations,
-      totalDurationMs: duration.toFixed(2),
-      avgDurationMs: avgDuration.toFixed(4),
-      opsPerSec: Math.floor(opsPerSec)
-    };
-
-    console.log(`\n📊 ${name}`);
-    console.log(`   Iterations: ${iterations}`);
-    console.log(`   Total: ${duration.toFixed(2)}ms`);
-    console.log(`   Average: ${avgDuration.toFixed(4)}ms`);
-    console.log(`   Throughput: ${Math.floor(opsPerSec).toLocaleString()} ops/sec`);
-
-    resolve(opsPerSec);
-  });
+/** Import a CommonJS native package's exports under either interop shape. */
+async function load(name: string): Promise<any> {
+  const mod: any = await import(name);
+  return mod.default && Object.keys(mod).length <= 2 ? { ...mod.default, ...mod } : mod;
 }
 
+const randomVector = (dim: number) => new Float32Array(dim).map(() => Math.random());
+
+/** Throughput floor; machine speed, so skipped under CI (#44). */
+function expectThroughput(opsPerSec: number, floor: number) {
+  expect(Number.isFinite(opsPerSec)).toBe(true);
+  expect(opsPerSec).toBeGreaterThan(0);
+  if (SPEED_GATES) expect(opsPerSec).toBeGreaterThan(floor);
+}
+
+/**
+ * Benchmark helper. A plain async function: the old `new Promise(async
+ * resolve => ...)` wrapper swallowed any throw from `fn` and never
+ * resolved, so one failing call hung the suite until the 600 s timeout.
+ */
+async function benchmark(name: string, fn: () => Promise<void> | void, iterations: number = 1): Promise<number> {
+  const start = performance.now();
+
+  for (let i = 0; i < iterations; i++) {
+    await fn();
+  }
+
+  const end = performance.now();
+  const duration = end - start;
+  const avgDuration = duration / iterations;
+  const opsPerSec = iterations / (duration / 1000);
+
+  RESULTS[name] = {
+    iterations,
+    totalDurationMs: duration.toFixed(2),
+    avgDurationMs: avgDuration.toFixed(4),
+    opsPerSec: Math.floor(opsPerSec)
+  };
+
+  console.log(`\n📊 ${name}`);
+  console.log(`   Iterations: ${iterations}`);
+  console.log(`   Total: ${duration.toFixed(2)}ms`);
+  console.log(`   Average: ${avgDuration.toFixed(4)}ms`);
+  console.log(`   Throughput: ${Math.floor(opsPerSec).toLocaleString()} ops/sec`);
+
+  return opsPerSec;
+}
+
+// @ruvector/core 0.1.x exports VectorDb (the VectorDB alias exists only in
+// index.d.ts), with insert({ id, vector }) and search({ vector, k }).
 describe('RuVector Core (@ruvector/core) Performance', () => {
   it('should benchmark vector insert performance', async () => {
-    const { VectorDB } = await import('@ruvector/core');
+    const { VectorDb } = await load('@ruvector/core');
 
-    const db = new VectorDB({
+    const db = new VectorDb({
       dimensions: 384,
-      maxElements: 10000,
+      storagePath: path.join(DB_DIR, 'core-insert.db'),
       distanceMetric: 'Cosine'
     });
 
     // Single insert
+    let n = 0;
     const singleInsert = await benchmark('Vector Insert (single)', async () => {
-      await db.insert('bench-single', new Float32Array(384).map(() => Math.random()));
+      const id = await db.insert({ id: `bench-single-${n++}`, vector: randomVector(384) });
+      expect(typeof id).toBe('string');
     }, 100);
 
-    expect(singleInsert).toBeGreaterThan(1000); // At least 1K ops/sec
+    expectThroughput(singleInsert, 1000); // At least 1K ops/sec
 
     // Batch insert
-    const batchEntries = Array.from({ length: 100 }, (_, i) => ({
-      id: `batch-${i}`,
-      vector: new Float32Array(384).map(() => Math.random())
-    }));
-
+    let round = 0;
     const batchInsert = await benchmark('Vector Insert (batch 100)', async () => {
-      await db.insertBatch(batchEntries);
+      const entries = Array.from({ length: 100 }, (_, i) => ({
+        id: `batch-${round}-${i}`,
+        vector: randomVector(384)
+      }));
+      round++;
+      const ids = await db.insertBatch(entries);
+      expect(ids).toHaveLength(100);
     }, 10);
+
+    expect(await db.len()).toBe(100 + 10 * 100);
 
     // Batch throughput should be 10K+ ops/sec (100 vectors per batch * throughput)
     const batchThroughput = batchInsert * 100;
-    expect(batchThroughput).toBeGreaterThan(10000);
+    expectThroughput(batchThroughput, 10000);
 
     console.log(`   → Batch throughput: ${batchThroughput.toLocaleString()} vectors/sec`);
   });
 
   it('should benchmark vector search performance', async () => {
-    const { VectorDB } = await import('@ruvector/core');
+    const { VectorDb } = await load('@ruvector/core');
 
-    const db = new VectorDB({
+    const db = new VectorDb({
       dimensions: 384,
-      maxElements: 10000,
+      storagePath: path.join(DB_DIR, 'core-search.db'),
       distanceMetric: 'Cosine'
     });
 
     // Insert test data
-    for (let i = 0; i < 1000; i++) {
-      await db.insert(`search-${i}`, new Float32Array(384).map(() => Math.random()));
-    }
+    await db.insertBatch(
+      Array.from({ length: 1000 }, (_, i) => ({ id: `search-${i}`, vector: randomVector(384) }))
+    );
 
-    const queryVector = new Float32Array(384).map(() => Math.random());
+    const queryVector = randomVector(384);
+    const checkResults = (results: Array<{ id: string; score: number }>, k: number) => {
+      expect(results.length).toBeGreaterThan(0);
+      expect(results.length).toBeLessThanOrEqual(k);
+      for (const r of results) {
+        expect(r.id.startsWith('search-')).toBe(true);
+        expect(Number.isFinite(r.score)).toBe(true);
+      }
+    };
 
     // Search k=10
     const search10 = await benchmark('Vector Search (k=10)', async () => {
-      await db.search(queryVector, 10);
+      checkResults(await db.search({ vector: queryVector, k: 10 }), 10);
     }, 100);
 
-    expect(search10).toBeGreaterThan(1000); // At least 1K searches/sec
+    expectThroughput(search10, 1000); // At least 1K searches/sec
 
     // Search k=100
     const search100 = await benchmark('Vector Search (k=100)', async () => {
-      await db.search(queryVector, 100);
+      checkResults(await db.search({ vector: queryVector, k: 100 }), 100);
     }, 100);
 
-    expect(search100).toBeGreaterThan(500); // At least 500 searches/sec
+    expectThroughput(search100, 500); // At least 500 searches/sec
   });
 });
 
 describe('RuVector Graph Database (@ruvector/graph-node) Performance', () => {
   it('should benchmark node creation performance', async () => {
-    const { GraphDatabase } = await import('@ruvector/graph-node');
+    const { GraphDatabase } = await load('@ruvector/graph-node');
 
     const db = new GraphDatabase({
       dimensions: 384,
       distanceMetric: 'Cosine',
-      storagePath: path.join(BENCH_DIR, 'bench-graph.db')
+      storagePath: path.join(DB_DIR, 'bench-graph.db')
     });
 
-    const embedding = new Float32Array(384).map(() => Math.random());
+    const embedding = randomVector(384);
 
     // Single node creation
+    let n = 0;
     const singleNode = await benchmark('Graph Node Create (single)', async () => {
-      await db.createNode({
-        id: `node-${Math.random()}`,
+      const id = await db.createNode({
+        id: `node-${n++}`,
         embedding,
         labels: ['Test'],
         properties: { type: 'benchmark' }
       });
+      expect(typeof id).toBe('string');
     }, 100);
 
-    expect(singleNode).toBeGreaterThan(1000); // At least 1K ops/sec
+    expectThroughput(singleNode, 1000); // At least 1K ops/sec
 
-    // Batch node creation
-    const nodes = Array.from({ length: 100 }, (_, i) => ({
-      id: `batch-node-${i}`,
-      embedding: new Float32Array(384).map(() => Math.random()),
-      labels: ['Test'],
-      properties: { type: 'benchmark', index: i.toString() }
-    }));
-
-    const edges: any[] = [];
-
+    // Batch node creation (fresh ids each round)
+    let round = 0;
     const batchCreate = await benchmark('Graph Node Create (batch 100)', async () => {
-      await db.batchInsert({ nodes, edges });
+      const nodes = Array.from({ length: 100 }, (_, i) => ({
+        id: `batch-node-${round}-${i}`,
+        embedding: randomVector(384),
+        labels: ['Test'],
+        properties: { type: 'benchmark', index: i.toString() }
+      }));
+      round++;
+      const result = await db.batchInsert({ nodes, edges: [] });
+      expect(result.nodeIds).toHaveLength(100);
     }, 10);
 
     const batchThroughput = batchCreate * 100;
-    expect(batchThroughput).toBeGreaterThan(50000); // At least 50K nodes/sec
+    expectThroughput(batchThroughput, 50000); // At least 50K nodes/sec
 
     console.log(`   → Batch throughput: ${batchThroughput.toLocaleString()} nodes/sec`);
   });
 
   it('should benchmark Cypher query performance', async () => {
-    const { GraphDatabase } = await import('@ruvector/graph-node');
+    const { GraphDatabase } = await load('@ruvector/graph-node');
 
-    const dbPath = path.join(BENCH_DIR, 'bench-cypher.db');
     const db = new GraphDatabase({
       dimensions: 384,
       distanceMetric: 'Cosine',
-      storagePath: dbPath
+      storagePath: path.join(DB_DIR, 'bench-cypher.db')
     });
 
     // Insert test data
     for (let i = 0; i < 100; i++) {
       await db.createNode({
         id: `cypher-${i}`,
-        embedding: new Float32Array(384).map(() => Math.random()),
+        embedding: randomVector(384),
         labels: ['Test'],
         properties: { index: i.toString(), type: 'benchmark' }
       });
@@ -187,26 +226,30 @@ describe('RuVector Graph Database (@ruvector/graph-node) Performance', () => {
 
     // Simple query
     const simpleQuery = await benchmark('Cypher Query (MATCH simple)', async () => {
-      await db.query('MATCH (n:Test) RETURN n LIMIT 10');
+      const result = await db.query('MATCH (n:Test) RETURN n LIMIT 10');
+      // @ruvector/graph-node 2.1.2 does not apply LIMIT (returns all 100).
+      expect(result.nodes.length).toBeGreaterThan(0);
+      expect(result.nodes.every((node: any) => node.labels.includes('Test'))).toBe(true);
     }, 100);
 
-    expect(simpleQuery).toBeGreaterThan(500); // At least 500 queries/sec
+    expectThroughput(simpleQuery, 500); // At least 500 queries/sec
 
     // Complex query with filtering
     const complexQuery = await benchmark('Cypher Query (MATCH with WHERE)', async () => {
-      await db.query('MATCH (n:Test) WHERE n.type = "benchmark" RETURN n LIMIT 10');
+      const result = await db.query('MATCH (n:Test) WHERE n.type = "benchmark" RETURN n LIMIT 10');
+      expect(Array.isArray(result.nodes)).toBe(true);
     }, 100);
 
-    expect(complexQuery).toBeGreaterThan(300); // At least 300 queries/sec
+    expectThroughput(complexQuery, 300); // At least 300 queries/sec
   });
 
   it('should benchmark graph traversal performance', async () => {
-    const { GraphDatabase } = await import('@ruvector/graph-node');
+    const { GraphDatabase } = await load('@ruvector/graph-node');
 
     const db = new GraphDatabase({
       dimensions: 384,
       distanceMetric: 'Cosine',
-      storagePath: path.join(BENCH_DIR, 'bench-traversal.db')
+      storagePath: path.join(DB_DIR, 'bench-traversal.db')
     });
 
     // Create a small graph
@@ -214,7 +257,7 @@ describe('RuVector Graph Database (@ruvector/graph-node) Performance', () => {
     for (let i = 0; i < 50; i++) {
       const id = await db.createNode({
         id: `trav-${i}`,
-        embedding: new Float32Array(384).map(() => Math.random()),
+        embedding: randomVector(384),
         labels: ['Traversal'],
         properties: { index: i.toString() }
       });
@@ -227,75 +270,89 @@ describe('RuVector Graph Database (@ruvector/graph-node) Performance', () => {
         from: nodeIds[i],
         to: nodeIds[i + 1],
         description: 'next',
-        embedding: new Float32Array(384).map(() => Math.random()),
+        embedding: randomVector(384),
         confidence: 0.9
       });
     }
 
-    // Benchmark k-hop traversal
+    // Benchmark k-hop traversal (kHop was renamed kHopNeighbors)
     const traversal = await benchmark('Graph Traversal (2-hop)', async () => {
-      await db.kHop(nodeIds[0], 2);
+      const neighbors: string[] = await db.kHopNeighbors(nodeIds[0], 2);
+      expect(neighbors).toContain(nodeIds[1]);
     }, 100);
 
-    expect(traversal).toBeGreaterThan(100); // At least 100 traversals/sec
+    expectThroughput(traversal, 100); // At least 100 traversals/sec
   });
 });
 
 describe('RuVector GNN (@ruvector/gnn) Performance', () => {
   it('should benchmark GNN forward pass performance', async () => {
-    const { RuvectorLayer } = await import('@ruvector/gnn');
+    const { RuvectorLayer } = await load('@ruvector/gnn');
 
     const layer = new RuvectorLayer(384, 512, 4, 0.1);
-    const nodeEmbedding = new Float32Array(384).map(() => Math.random());
-    const neighborEmbeddings = [
-      new Float32Array(384).map(() => Math.random()),
-      new Float32Array(384).map(() => Math.random()),
-      new Float32Array(384).map(() => Math.random())
-    ];
-    const edgeWeights = [0.8, 0.6, 0.9];
+    const nodeEmbedding = randomVector(384);
+    const neighborEmbeddings = [randomVector(384), randomVector(384), randomVector(384)];
+    // forward() takes the edge weights as a Float32Array
+    const edgeWeights = new Float32Array([0.8, 0.6, 0.9]);
+
+    const output: Float32Array = layer.forward(nodeEmbedding, neighborEmbeddings, edgeWeights);
+    expect(output.length).toBe(512);
+    expect(Array.from(output).every(Number.isFinite)).toBe(true);
 
     const forwardPass = await benchmark('GNN Forward Pass (3 neighbors)', async () => {
       layer.forward(nodeEmbedding, neighborEmbeddings, edgeWeights);
     }, 1000);
 
-    expect(forwardPass).toBeGreaterThan(500); // At least 500 forward passes/sec
+    expectThroughput(forwardPass, 500); // At least 500 forward passes/sec
   });
 
   it('should benchmark tensor compression performance', async () => {
-    const { TensorCompress } = await import('@ruvector/gnn');
+    const { TensorCompress } = await load('@ruvector/gnn');
 
     const compressor = new TensorCompress();
-    const tensor = new Float32Array(384).map(() => Math.random());
+    const tensor = randomVector(384);
 
     const compression = await benchmark('Tensor Compression', async () => {
       compressor.compress(tensor, 0.5);
     }, 1000);
 
-    expect(compression).toBeGreaterThan(1000); // At least 1K compressions/sec
+    expectThroughput(compression, 1000); // At least 1K compressions/sec
 
-    const compressed = compressor.compress(tensor, 0.5);
+    const compressed: string = compressor.compress(tensor, 0.5);
+    expect(typeof compressed).toBe('string');
+    const restored: Float32Array = compressor.decompress(compressed);
+    expect(restored.length).toBe(384);
+    expect(Array.from(restored).every(Number.isFinite)).toBe(true);
 
     const decompression = await benchmark('Tensor Decompression', async () => {
       compressor.decompress(compressed);
     }, 1000);
 
-    expect(decompression).toBeGreaterThan(1000); // At least 1K decompressions/sec
+    expectThroughput(decompression, 1000); // At least 1K decompressions/sec
   });
 
+  // The DifferentiableSearch class is now the differentiableSearch(query,
+  // candidates, k, temperature) function.
   it('should benchmark differentiable search performance', async () => {
-    const { DifferentiableSearch } = await import('@ruvector/gnn');
+    const { differentiableSearch } = await load('@ruvector/gnn');
 
-    const searcher = new DifferentiableSearch();
-    const query = new Float32Array(128).map(() => Math.random());
-    const candidates = Array.from({ length: 100 }, () =>
-      new Float32Array(128).map(() => Math.random())
-    );
+    const query = randomVector(128);
+    const candidates = Array.from({ length: 100 }, () => randomVector(128));
+
+    const result = differentiableSearch(query, candidates, 10, 1.0);
+    expect(result.indices).toHaveLength(10);
+    expect(result.weights).toHaveLength(10);
+    for (const idx of result.indices) {
+      expect(idx).toBeGreaterThanOrEqual(0);
+      expect(idx).toBeLessThan(100);
+    }
+    expect(result.weights.every(Number.isFinite)).toBe(true);
 
     const search = await benchmark('Differentiable Search (100 candidates)', async () => {
-      searcher.search(query, candidates, 10);
+      differentiableSearch(query, candidates, 10, 1.0);
     }, 100);
 
-    expect(search).toBeGreaterThan(100); // At least 100 searches/sec
+    expectThroughput(search, 100); // At least 100 searches/sec
   });
 });
 
@@ -313,7 +370,7 @@ describe('AgentDB SDK Integration Performance', () => {
     await embedder.initialize();
 
     const db = await createUnifiedDatabase(
-      path.join(BENCH_DIR, 'bench-reflexion.graph'),
+      path.join(DB_DIR, 'bench-reflexion.graph'),
       embedder,
       { forceMode: 'graph' }
     );
@@ -333,14 +390,16 @@ describe('AgentDB SDK Integration Performance', () => {
       });
     }, 50);
 
-    expect(storeEpisode).toBeGreaterThan(10); // At least 10 episodes/sec
+    expectThroughput(storeEpisode, 10); // At least 10 episodes/sec
 
     // Benchmark episode retrieval
     const retrieveEpisode = await benchmark('ReflexionMemory Retrieve Episodes', async () => {
-      await reflexion.retrieveRelevant({ task: 'benchmark', k: 10 });
+      const episodes = await reflexion.retrieveRelevant({ task: 'benchmark', k: 10 });
+      expect(episodes.length).toBeGreaterThan(0);
+      expect(episodes.length).toBeLessThanOrEqual(10);
     }, 50);
 
-    expect(retrieveEpisode).toBeGreaterThan(10); // At least 10 retrievals/sec
+    expectThroughput(retrieveEpisode, 10); // At least 10 retrievals/sec
 
     db.close();
   });
@@ -358,13 +417,15 @@ describe('AgentDB SDK Integration Performance', () => {
     await embedder.initialize();
 
     const db = await createUnifiedDatabase(
-      path.join(BENCH_DIR, 'bench-skills.graph'),
+      path.join(DB_DIR, 'bench-skills.graph'),
       embedder,
       { forceMode: 'graph' }
     );
 
     const graphDb = db.getGraphDatabase()!;
-    const skills = new SkillLibrary(graphDb as any, embedder, graphDb as any);
+    // The graph backend is the 4th argument (3rd is the vector backend);
+    // passed 3rd, createSkill fell through to SQLite (this.db.prepare).
+    const skills = new SkillLibrary(graphDb as any, embedder, undefined, graphDb as any);
 
     // Benchmark skill creation
     const createSkill = await benchmark('SkillLibrary Create Skill', async () => {
@@ -376,14 +437,20 @@ describe('AgentDB SDK Integration Performance', () => {
       });
     }, 50);
 
-    expect(createSkill).toBeGreaterThan(10); // At least 10 skills/sec
+    expectThroughput(createSkill, 10); // At least 10 skills/sec
 
     // Benchmark skill search
     const searchSkill = await benchmark('SkillLibrary Search Skills', async () => {
-      await skills.searchSkills({ query: 'benchmark', k: 10 });
+      // The graph path filters on avgReward (stored as 0 here) as the success
+      // rate, so the default minSuccessRate of 0.5 would drop every skill.
+      // Not bounded by k: the adapter's Cypher LIMIT is ignored by
+      // @ruvector/graph-node 2.1.2, so all stored skills come back.
+      const found = await skills.searchSkills({ query: 'benchmark', k: 10, minSuccessRate: 0 });
+      expect(found.length).toBeGreaterThan(0);
+      expect(found.every((skill) => skill.name.startsWith('skill-'))).toBe(true);
     }, 50);
 
-    expect(searchSkill).toBeGreaterThan(10); // At least 10 searches/sec
+    expectThroughput(searchSkill, 10); // At least 10 searches/sec
 
     db.close();
   });
@@ -391,6 +458,7 @@ describe('AgentDB SDK Integration Performance', () => {
 
 // After all tests, write results to file
 afterAll(() => {
+  fs.rmSync(DB_DIR, { recursive: true, force: true });
   const resultsPath = path.join(BENCH_DIR, 'benchmark-results.json');
   fs.writeFileSync(resultsPath, JSON.stringify(RESULTS, null, 2));
 

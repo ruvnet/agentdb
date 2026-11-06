@@ -50,6 +50,9 @@ export type {
  * - AttentionCoreCompute: Core computation algorithms
  */
 export class AttentionService {
+  /** Default cap on queryRows × keyRows × numHeads per call (2^25 ≈ 128 MB of f32). */
+  static readonly DEFAULT_MAX_ATTENTION_SCORES = 2 ** 25;
+
   private configManager: AttentionConfigManager;
   private metricsTracker: AttentionMetricsTracker;
   private cacheManager: AttentionCacheManager;
@@ -61,6 +64,7 @@ export class AttentionService {
   private initialized: boolean = false;
   private initPromise: Promise<void> | null = null;
   private warmedUp: boolean = false;
+  private disposed: boolean = false;
 
   constructor(config: AttentionConfig) {
     this.configManager = new AttentionConfigManager(config);
@@ -91,6 +95,10 @@ export class AttentionService {
    * Thread-safe with promise guard to prevent concurrent initialization
    */
   async initialize(): Promise<void> {
+    if (this.disposed) {
+      throw new Error('AttentionService has been disposed; create a new instance');
+    }
+
     // Already initialized
     if (this.initialized) {
       return;
@@ -110,17 +118,14 @@ export class AttentionService {
    * Internal initialization implementation
    */
   private async _doInitialize(): Promise<void> {
-    performance.mark('attention-service-init-start');
+    const startTime = performance.now();
 
     try {
       await this.wasmManager.initialize();
 
       this.initialized = true;
-      performance.mark('attention-service-init-end');
-      performance.measure('attention-service-init', 'attention-service-init-start', 'attention-service-init-end');
 
-      const measure = performance.getEntriesByName('attention-service-init')[0];
-      console.error(`✅ AttentionService initialized in ${measure.duration.toFixed(2)}ms (${this.wasmManager.getRuntime()})`);
+      console.error(`✅ AttentionService initialized in ${(performance.now() - startTime).toFixed(2)}ms (${this.wasmManager.getRuntime()})`);
 
       // Clear performance entries to prevent memory leak
       this.metricsTracker.clearPerformanceEntries('attention-service-init');
@@ -157,11 +162,22 @@ export class AttentionService {
     value: Float32Array,
     mask?: Float32Array
   ): Promise<AttentionResult> {
-    if (!this.initialized) {
-      await this.initialize();
-    }
+    await this.ensureReady();
+    this.validateInputs('multiHeadAttention', query, key, value, true);
+    return this.computeMultiHead(query, key, value, mask);
+  }
 
-    performance.mark('mha-start');
+  /**
+   * Multi-head attention without input validation. Used by internal callers
+   * (warm-up, sparse and partitioned attention) that build their own buffers.
+   */
+  private async computeMultiHead(
+    query: Float32Array,
+    key: Float32Array,
+    value: Float32Array,
+    mask?: Float32Array
+  ): Promise<AttentionResult> {
+    const startTime = performance.now();
 
     try {
       let output: Float32Array;
@@ -207,10 +223,7 @@ export class AttentionService {
         runtime = 'fallback';
       }
 
-      performance.mark('mha-end');
-      performance.measure('mha', 'mha-start', 'mha-end');
-      const measure = performance.getEntriesByName('mha')[0];
-      const executionTimeMs = measure.duration;
+      const executionTimeMs = performance.now() - startTime;
 
       // Update statistics
       this.metricsTracker.updateStats('multi-head', runtime, executionTimeMs, output.length * 4);
@@ -237,11 +250,10 @@ export class AttentionService {
     value: Float32Array,
     mask?: Float32Array
   ): Promise<AttentionResult> {
-    if (!this.initialized) {
-      await this.initialize();
-    }
+    await this.ensureReady();
+    this.validateInputs('flashAttention', query, key, value, true);
 
-    performance.mark('flash-start');
+    const startTime = performance.now();
 
     try {
       let output: Float32Array;
@@ -281,10 +293,7 @@ export class AttentionService {
         runtime = 'fallback';
       }
 
-      performance.mark('flash-end');
-      performance.measure('flash', 'flash-start', 'flash-end');
-      const measure = performance.getEntriesByName('flash')[0];
-      const executionTimeMs = measure.duration;
+      const executionTimeMs = performance.now() - startTime;
 
       // Update statistics
       this.metricsTracker.updateStats('flash', runtime, executionTimeMs, output.length * 4);
@@ -315,11 +324,10 @@ export class AttentionService {
       dropout?: number;
     }
   ): Promise<AttentionResult & { speedup?: number; baselineTimeMs?: number }> {
-    if (!this.initialized) {
-      await this.initialize();
-    }
+    await this.ensureReady();
+    this.validateInputs('flashAttentionV2', query, key, value, true);
 
-    performance.mark('flash-v2-start');
+    const startTime = performance.now();
 
     try {
       let output: Float32Array;
@@ -393,10 +401,7 @@ export class AttentionService {
         }
       }
 
-      performance.mark('flash-v2-end');
-      performance.measure('flash-v2', 'flash-v2-start', 'flash-v2-end');
-      const measure = performance.getEntriesByName('flash-v2')[0];
-      const executionTimeMs = measure.duration;
+      const executionTimeMs = performance.now() - startTime;
 
       // Update statistics
       this.metricsTracker.updateStats('flash-v2', runtime, executionTimeMs, output.length * 4);
@@ -436,11 +441,10 @@ export class AttentionService {
     key: Float32Array,
     value: Float32Array
   ): Promise<AttentionResult> {
-    if (!this.initialized) {
-      await this.initialize();
-    }
+    await this.ensureReady();
+    this.validateInputs('linearAttention', query, key, value, false);
 
-    performance.mark('linear-start');
+    const startTime = performance.now();
 
     try {
       let output: Float32Array;
@@ -477,10 +481,7 @@ export class AttentionService {
         runtime = 'fallback';
       }
 
-      performance.mark('linear-end');
-      performance.measure('linear', 'linear-start', 'linear-end');
-      const measure = performance.getEntriesByName('linear')[0];
-      const executionTimeMs = measure.duration;
+      const executionTimeMs = performance.now() - startTime;
 
       // Update statistics
       this.metricsTracker.updateStats('linear', runtime, executionTimeMs, output.length * 4);
@@ -506,11 +507,13 @@ export class AttentionService {
     value: Float32Array,
     curvature: number = -1.0
   ): Promise<AttentionResult> {
-    if (!this.initialized) {
-      await this.initialize();
+    await this.ensureReady();
+    this.validateInputs('hyperbolicAttention', query, key, value, true);
+    if (!Number.isFinite(curvature)) {
+      throw new Error(`hyperbolicAttention: curvature must be finite, got ${curvature}`);
     }
 
-    performance.mark('hyperbolic-start');
+    const startTime = performance.now();
 
     try {
       let output: Float32Array;
@@ -550,10 +553,7 @@ export class AttentionService {
         runtime = 'fallback';
       }
 
-      performance.mark('hyperbolic-end');
-      performance.measure('hyperbolic', 'hyperbolic-start', 'hyperbolic-end');
-      const measure = performance.getEntriesByName('hyperbolic')[0];
-      const executionTimeMs = measure.duration;
+      const executionTimeMs = performance.now() - startTime;
 
       // Update statistics
       this.metricsTracker.updateStats('hyperbolic', runtime, executionTimeMs, output.length * 4);
@@ -592,9 +592,8 @@ export class AttentionService {
       compareBaseline?: boolean;
     }
   ): Promise<{ output: Float32Array; speedup?: number; baselineTimeMs?: number; fusedTimeMs?: number }> {
-    if (!this.initialized) {
-      await this.initialize();
-    }
+    await this.ensureReady();
+    this.validateInputs('fusedAttention', query, key, value, true);
 
     return this.coreCompute.fusedAttention(query, key, value, options);
   }
@@ -608,11 +607,10 @@ export class AttentionService {
     value: Float32Array,
     mask?: Float32Array
   ): Promise<AttentionResult> {
-    if (!this.initialized) {
-      await this.initialize();
-    }
+    await this.ensureReady();
+    this.validateInputs('moeAttention', query, key, value, true);
 
-    performance.mark('moe-start');
+    const startTime = performance.now();
 
     try {
       let output: Float32Array;
@@ -659,10 +657,7 @@ export class AttentionService {
         runtime = 'fallback';
       }
 
-      performance.mark('moe-end');
-      performance.measure('moe', 'moe-start', 'moe-end');
-      const measure = performance.getEntriesByName('moe')[0];
-      const executionTimeMs = measure.duration;
+      const executionTimeMs = performance.now() - startTime;
 
       // Update statistics
       this.metricsTracker.updateStats('moe', runtime, executionTimeMs, output.length * 4);
@@ -698,7 +693,7 @@ export class AttentionService {
     }
 
     // Run once to warm up JIT (result discarded)
-    await this.multiHeadAttention(dummyQ, dummyK, dummyV);
+    await this.computeMultiHead(dummyQ, dummyK, dummyV);
   }
 
   /**
@@ -720,6 +715,8 @@ export class AttentionService {
    * Call this when AttentionService is no longer needed
    */
   async dispose(): Promise<void> {
+    this.disposed = true;
+
     // Clean up WASM modules
     await this.wasmManager.dispose();
 
@@ -761,11 +758,10 @@ export class AttentionService {
       topK?: number;
     }
   ): Promise<AttentionResult> {
-    if (!this.initialized) {
-      await this.initialize();
-    }
+    await this.ensureReady();
+    this.validateVector('sparseAttention', 'query', query);
 
-    performance.mark('sparse-attention-start');
+    const startTime = performance.now();
 
     try {
       const numNodes = graphEdges.length;
@@ -775,7 +771,7 @@ export class AttentionService {
         console.warn(`⚠️  Graph size ${numNodes} < 1000, using dense attention`);
         const dummyKey = new Float32Array(query.length);
         const dummyValue = new Float32Array(query.length);
-        return this.multiHeadAttention(query, dummyKey, dummyValue);
+        return this.computeMultiHead(query, dummyKey, dummyValue);
       }
 
       // Initialize or reconfigure sparsification service
@@ -848,16 +844,13 @@ export class AttentionService {
       }
 
       // Run attention on sparse graph
-      const attentionResult = await this.multiHeadAttention(
+      const attentionResult = await this.computeMultiHead(
         sparseQuery,
         sparseKey,
         sparseValue
       );
 
-      performance.mark('sparse-attention-end');
-      performance.measure('sparse-attention', 'sparse-attention-start', 'sparse-attention-end');
-      const measure = performance.getEntriesByName('sparse-attention')[0];
-      const executionTimeMs = measure.duration;
+      const executionTimeMs = performance.now() - startTime;
 
       // Update statistics
       this.metricsTracker.updateStats('sparse', attentionResult.runtime, executionTimeMs, attentionResult.output.length * 4);
@@ -900,11 +893,10 @@ export class AttentionService {
       maxPartitionSize?: number;
     }
   ): Promise<AttentionResult> {
-    if (!this.initialized) {
-      await this.initialize();
-    }
+    await this.ensureReady();
+    this.validateVector('partitionedAttention', 'query', query);
 
-    performance.mark('partitioned-attention-start');
+    const startTime = performance.now();
 
     try {
       const numNodes = graphEdges.length;
@@ -914,7 +906,7 @@ export class AttentionService {
         console.warn(`⚠️  Graph size ${numNodes} < 1000, using dense attention`);
         const dummyKey = new Float32Array(query.length);
         const dummyValue = new Float32Array(query.length);
-        return this.multiHeadAttention(query, dummyKey, dummyValue);
+        return this.computeMultiHead(query, dummyKey, dummyValue);
       }
 
       // Initialize mincut service if not already
@@ -956,7 +948,7 @@ export class AttentionService {
         }
 
         // Run attention on this partition
-        const partitionResult = await this.multiHeadAttention(
+        const partitionResult = await this.computeMultiHead(
           partitionQuery,
           partitionKey,
           partitionValue
@@ -974,10 +966,7 @@ export class AttentionService {
         offset += output.length;
       }
 
-      performance.mark('partitioned-attention-end');
-      performance.measure('partitioned-attention', 'partitioned-attention-start', 'partitioned-attention-end');
-      const measure = performance.getEntriesByName('partitioned-attention')[0];
-      const executionTimeMs = measure.duration;
+      const executionTimeMs = performance.now() - startTime;
 
       // Update statistics
       this.metricsTracker.updateStats('partitioned', 'fallback', executionTimeMs, mergedOutput.length * 4);
@@ -996,6 +985,82 @@ export class AttentionService {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       throw new Error(`Partitioned attention failed: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Throw if disposed; initialize lazily otherwise.
+   */
+  private async ensureReady(): Promise<void> {
+    if (this.disposed) {
+      throw new Error('AttentionService has been disposed; create a new instance');
+    }
+    if (!this.initialized) {
+      await this.initialize();
+    }
+  }
+
+  /**
+   * Reject a vector that is not a non-empty array of finite numbers.
+   */
+  private validateVector(op: string, name: string, data: Float32Array): void {
+    if (!(data instanceof Float32Array) && !Array.isArray(data)) {
+      throw new TypeError(`${op}: ${name} must be a Float32Array`);
+    }
+    if (data.length === 0) {
+      throw new Error(`${op}: ${name} is empty`);
+    }
+    for (let i = 0; i < data.length; i++) {
+      const v = data[i];
+      if (!Number.isFinite(v)) {
+        const kind = Number.isNaN(v) ? 'NaN' : v > 0 ? 'Infinity' : '-Infinity';
+        throw new Error(`${op}: ${name}[${i}] is ${kind}`);
+      }
+    }
+  }
+
+  /**
+   * Validate query/key/value buffers laid out as rows of embedDim.
+   *
+   * - each buffer is non-empty, finite, and a whole number of embedDim rows
+   * - key and value have the same number of rows (query may differ: cross-attention)
+   * - for quadratic mechanisms, queryRows × keyRows × numHeads stays under
+   *   maxAttentionScores, so oversized calls fail fast with a size error
+   */
+  private validateInputs(
+    op: string,
+    query: Float32Array,
+    key: Float32Array,
+    value: Float32Array,
+    quadratic: boolean
+  ): void {
+    const embedDim = this.configManager.getEmbedDim();
+    const buffers: Array<[string, Float32Array]> = [['query', query], ['key', key], ['value', value]];
+    for (const [name, data] of buffers) {
+      this.validateVector(op, name, data);
+      if (data.length % embedDim !== 0) {
+        throw new Error(
+          `${op}: ${name} length ${data.length} is not a multiple of embedDim ${embedDim} (dimension mismatch)`
+        );
+      }
+    }
+    if (key.length !== value.length) {
+      throw new Error(
+        `${op}: key and value dimension mismatch (${key.length / embedDim} vs ${value.length / embedDim} rows)`
+      );
+    }
+    if (quadratic) {
+      const queryRows = query.length / embedDim;
+      const keyRows = key.length / embedDim;
+      const numHeads = this.configManager.getNumHeads();
+      const scores = queryRows * keyRows * numHeads;
+      const limit = this.configManager.getConfig().maxAttentionScores ?? AttentionService.DEFAULT_MAX_ATTENTION_SCORES;
+      if (scores > limit) {
+        throw new Error(
+          `${op}: ${queryRows}×${keyRows}×${numHeads} = ${scores} attention scores exceed the size limit of ${limit} ` +
+          `(raise maxAttentionScores, or use linearAttention / sparseAttention)`
+        );
+      }
     }
   }
 

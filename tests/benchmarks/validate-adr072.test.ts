@@ -20,9 +20,13 @@ describe('ADR-072 Component Validation', () => {
       seed: 42
     });
 
-    expect(graph.sourceIds.length).toBeGreaterThan(0);
-    expect(graph.targetIds.length).toBe(graph.sourceIds.length);
-    expect(graph.weights.length).toBe(graph.sourceIds.length);
+    // Adjacency array (GraphEdges): what SparsificationService and
+    // MincutService accept. Undirected, so every edge appears both ways.
+    expect(graph.length).toBe(100);
+    expect(graph.some((neighbors) => (neighbors?.length ?? 0) > 0)).toBe(true);
+    graph.forEach((neighbors, u) => {
+      for (const v of neighbors ?? []) expect(graph[v]).toContain(u);
+    });
 
     const stats = calculateGraphStats(graph);
     console.log(`✅ Random graph: ${stats.numNodes} nodes, ${stats.numEdges} edges`);

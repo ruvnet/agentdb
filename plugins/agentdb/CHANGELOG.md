@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.6.0]
+
+- `.mcp.json` starts `agentdb@3.6.0` (skips 3.5.0): AttentionService input validation, RVF backend keeps queued writes when an ingest fails, `@ruvector/sona` ^0.1.11.
+
 ## [3.4.0]
 
 - `.mcp.json` starts `agentdb@3.4.0` (agentdb ADR-018: ecosystem integrations).
