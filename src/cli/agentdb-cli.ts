@@ -12,6 +12,7 @@
 import { createDatabase } from '../db-fallback.js';
 import { randomBytes } from 'crypto';
 import { parseJsonStrict } from '../security/input-validation.js';
+import { blobToFloat32 } from '../utils/top-k.js';
 import { CausalMemoryGraph } from '../controllers/CausalMemoryGraph.js';
 import { CausalRecall } from '../controllers/CausalRecall.js';
 import { ExplainableRecall } from '../controllers/ExplainableRecall.js';
@@ -2739,6 +2740,7 @@ async function handleOptimizeMemoryCommand(cli: AgentDBCLI, args: string[]) {
 async function handleVectorSearchCommand(args: string[]) {
   // Parse arguments
   let dbPath = './agentdb.db';
+  let dbPathGiven = false;
   let vector: number[] = [];
   let k = 10;
   let threshold = 0.0;
@@ -2765,8 +2767,11 @@ async function handleVectorSearchCommand(args: string[]) {
       if (i + 1 < args.length && !args[i + 1].startsWith('-')) {
         mmrLambda = parseFloat(args[++i]);
       }
-    } else if (!dbPath.endsWith('.db') && !arg.startsWith('[')) {
+    } else if (!dbPathGiven && !arg.startsWith('[') && isNaN(parseFloat(arg))) {
+      // First non-vector positional is the db path (the default already ends
+      // in .db, so the old `!dbPath.endsWith('.db')` guard never let it through)
       dbPath = arg;
+      dbPathGiven = true;
     } else if (arg.startsWith('[') || (!isNaN(parseFloat(arg)))) {
       // Parse vector - either JSON array or space-separated numbers
       try {
@@ -2819,7 +2824,7 @@ async function handleVectorSearchCommand(args: string[]) {
 
   // Calculate similarities
   let scored = results.map((row: any) => {
-    const embedding = new Float32Array(row.embedding);
+    const embedding = blobToFloat32(row.embedding);
     const similarity = calculateSimilarity(vector, Array.from(embedding), metric);
     return {
       id: row.id,
@@ -2961,6 +2966,25 @@ async function handleExportCommand(args: string[]) {
   }
 }
 
+/**
+ * `export` JSON-serializes BLOB columns as-is: a better-sqlite3 Buffer becomes
+ * {type:'Buffer', data:[bytes]} and a sql.js Uint8Array becomes {"0":b0,...}.
+ * Turn either form back into bytes so embeddings survive export -> import.
+ */
+function decodeExportedBlob(value: unknown): Buffer | undefined {
+  if (value == null) return undefined;
+  if (Buffer.isBuffer(value) || value instanceof Uint8Array) return Buffer.from(value);
+  if (typeof value === 'object') {
+    const obj = value as { type?: unknown; data?: unknown };
+    if (obj.type === 'Buffer' && Array.isArray(obj.data)) return Buffer.from(obj.data as number[]);
+    const bytes = Object.values(value as Record<string, unknown>);
+    if (bytes.length > 0 && bytes.every((v) => typeof v === 'number')) {
+      return Buffer.from(bytes as number[]);
+    }
+  }
+  return undefined;
+}
+
 // Import command - import vectors from JSON with optional decompression
 async function handleImportCommand(args: string[]) {
   let inputPath = '';
@@ -3043,9 +3067,10 @@ async function handleImportCommand(args: string[]) {
       );
 
       // Import embedding if exists
-      if (item.embedding) {
+      const embedding = decodeExportedBlob(item.embedding);
+      if (embedding) {
         const embeddingQuery = `INSERT INTO episode_embeddings (episode_id, embedding) VALUES (?, ?)`;
-        cli.db.prepare(embeddingQuery).run(result.lastInsertRowid, item.embedding);
+        cli.db.prepare(embeddingQuery).run(result.lastInsertRowid, embedding);
       }
 
       imported++;
