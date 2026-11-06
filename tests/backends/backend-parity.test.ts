@@ -219,7 +219,7 @@ describe('Backend Parity Tests', () => {
       const threshold = 0.7;
 
       const hnswResults = await hnswIndex.search(query.embedding, K_RESULTS, { threshold });
-      const wasmResults = await wasmSearch.findKNN(query.embedding, K_RESULTS, { threshold });
+      const wasmResults = await wasmSearch.findKNN(query.embedding, K_RESULTS, 'pattern_embeddings', { threshold });
 
       // Both should filter by threshold
       for (const result of hnswResults) {
@@ -313,9 +313,9 @@ describe('Backend Parity Tests', () => {
     it('should handle zero-vector queries without errors', async () => {
       const zeroVector = new Float32Array(DIMENSION); // All zeros
 
-      await expect(async () => {
-        await hnswIndex.search(zeroVector, K_RESULTS);
-      }).rejects.toThrow(); // HNSW may error on zero vectors
+      // hnswlib-node 3 answers a zero-vector cosine query (distance 1) rather than throwing
+      const hnswResults = await hnswIndex.search(zeroVector, K_RESULTS);
+      expect(Array.isArray(hnswResults)).toBe(true);
 
       // WASM should handle gracefully
       const wasmResults = await wasmSearch.findKNN(zeroVector, K_RESULTS);
