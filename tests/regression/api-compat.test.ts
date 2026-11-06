@@ -50,7 +50,7 @@ describe('API Backward Compatibility', () => {
     // Initialize embedder
     embedder = new EmbeddingService({
       model: 'mock-model',
-      dimensions: 384,
+      dimension: 384,
       provider: 'local',
     });
     await embedder.initialize();
@@ -65,7 +65,7 @@ describe('API Backward Compatibility', () => {
     reasoningBank = new ReasoningBank(db, embedder);
     skillLibrary = new SkillLibrary(db, embedder, vectorBackend);
     hnswIndex = new HNSWIndex(db, {
-      dimensions: 384,
+      dimension: 384,
       metric: 'cosine',
       M: 16,
       efConstruction: 200,
@@ -556,7 +556,7 @@ describe('API Backward Compatibility', () => {
     describe('Constructor - v1 signature', () => {
       it('should accept v1 config object', () => {
         const config: Partial<HNSWConfig> = {
-          dimensions: 384,
+          dimension: 384,
           metric: 'cosine',
           M: 16,
           efConstruction: 200,
@@ -571,7 +571,7 @@ describe('API Backward Compatibility', () => {
 
       it('should work with minimal config', () => {
         const index = new HNSWIndex(db, {
-          dimensions: 384,
+          dimension: 384,
           metric: 'cosine',
         });
 
@@ -583,7 +583,7 @@ describe('API Backward Compatibility', () => {
 
         metrics.forEach(metric => {
           const index = new HNSWIndex(db, {
-            dimensions: 384,
+            dimension: 384,
             metric,
           });
 
@@ -874,7 +874,7 @@ describe('API Backward Compatibility', () => {
     });
 
     it('should throw when searching unbuilt index', async () => {
-      const newIndex = new HNSWIndex(db, { dimensions: 384, metric: 'cosine' });
+      const newIndex = new HNSWIndex(db, { dimension: 384, metric: 'cosine' });
       const query = new Float32Array(384);
 
       await expect(newIndex.search(query, 5)).rejects.toThrow('Index not built');
