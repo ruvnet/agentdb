@@ -934,7 +934,7 @@ export class ReflexionMemory {
     const stmt = this.db.prepare<DatabaseRows.Episode>(`
       SELECT * FROM episodes
       WHERE session_id = ?
-      ORDER BY ts DESC
+      ORDER BY ts DESC, id DESC
       LIMIT ?
     `);
 

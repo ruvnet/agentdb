@@ -95,6 +95,20 @@ export class MultiHeadAttentionController {
       aggregation: 'average',
       ...config
     };
+    if (config.numHeads !== undefined && (!Number.isInteger(config.numHeads) || config.numHeads <= 0)) {
+      throw new Error('numHeads must be a positive integer');
+    }
+    if (config.headDim !== undefined && (!Number.isInteger(config.headDim) || config.headDim <= 0)) {
+      throw new Error('headDim must be a positive integer');
+    }
+  }
+
+  /**
+   * Per-head subspace size. Clamped to >= 1 so a vector narrower than the
+   * head count still yields a non-empty projection instead of all-zero heads.
+   */
+  private resolveHeadDim(dimension: number): number {
+    return this.config.headDim || Math.max(1, Math.floor(dimension / (this.config.numHeads || 8)));
   }
 
   /**
@@ -102,7 +116,7 @@ export class MultiHeadAttentionController {
    */
   private initializeProjections(dimension: number): void {
     const numHeads = this.config.numHeads || 8;
-    const headDim = this.config.headDim || Math.floor(dimension / numHeads);
+    const headDim = this.resolveHeadDim(dimension);
 
     this.headProjections = [];
 
@@ -175,7 +189,7 @@ export class MultiHeadAttentionController {
       return vector.slice(start, start + headDim);
     }
 
-    const headDim = this.config.headDim || Math.floor(this.dimension / (this.config.numHeads || 8));
+    const headDim = this.resolveHeadDim(this.dimension);
     const result = new Array(headDim).fill(0);
 
     for (let i = 0; i < headDim; i++) {
@@ -455,7 +469,7 @@ export class MultiHeadAttentionController {
   ): number[] {
     // Simple reconstruction by placing head output in appropriate position
     const numHeads = this.config.numHeads || 8;
-    const headDim = Math.floor(targetDim / numHeads);
+    const headDim = Math.max(1, Math.floor(targetDim / numHeads));
     const result = new Array(targetDim).fill(0);
 
     const start = headIndex * headDim;
