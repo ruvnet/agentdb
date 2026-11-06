@@ -35,6 +35,10 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - name: No high or critical advisories in the non-optional tree
+        # Optional deps are excluded: aidefence pins zod ^3 and no patched 3.x
+        # exists (GHSA-mrhx-c7xc-m3w5); that needs an aidefence release.
+        run: npm audit --omit=optional --audit-level=high
       - name: Typecheck and build
         run: npm run build:ts && npm run copy:schemas
       - name: CRUD, hybrid retrieval, ecosystem integration (incl. ruvllm API contract), graph, attention validation and RVF flush unit tests
