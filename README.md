@@ -21,7 +21,7 @@ A single-file cognitive container — vectors, indexes, learning state, and a cr
 <!-- ecosystem-cta:start -->
 ### Explore the wider ecosystem
 
-[![AgentDB: Give your next idea a workspace. Try ruOS.](docs/assets/ecosystem-cta.svg)](https://ruos.cognitum.one/)
+[![AgentDB: try ruOS. Conceptual project-to-destination animation.](docs/assets/ecosystem-cta.svg)](https://ruos.cognitum.one/)
 
 Building agents that remember? Explore the wider ecosystem.
 
