@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
+import { SPEED_GATES } from '../../../tests/benchmarks/helpers/speed-gate';
 import { quantumHybridScenario } from '../../scenarios/latent-space/quantum-hybrid';
 import type { SimulationReport } from '../../types';
 
@@ -64,7 +65,9 @@ describe('QuantumHybrid (Theoretical)', () => {
       const results = (report.detailedResults as any[]).filter(r => r.hardwareYear === 2030);
 
       if (results.length > 0) {
-        const avg = results.reduce((sum, r) => sum + (r.viability?.current2025Viability || 0), 0) / results.length;
+        // The 2030 projection is `viability`; `current2025Viability` is the
+        // 2025 baseline (0.124) carried on every result, so it never measured 2030.
+        const avg = results.reduce((sum, r) => sum + (r.viability?.viability || 0), 0) / results.length;
         expect(avg).toBeGreaterThan(0.20);
         expect(avg).toBeLessThan(0.60);
       }
@@ -243,9 +246,13 @@ describe('QuantumHybrid (Theoretical)', () => {
 
     it('should not exceed theoretical limits', () => {
       const results = report.detailedResults as any[];
+      // Amplitude encoding models O(1) vs O(d) inner products, so its speedup
+      // is the dimension itself (1024 at the largest configured dim). The
+      // bound is the largest dimension, not a fixed 1000.
+      const maxDim = Math.max(...quantumHybridScenario.config.dimensions);
       results.forEach(r => {
         if (r.speedups?.theoreticalSpeedup) {
-          expect(r.speedups.theoreticalSpeedup).toBeLessThan(1000); // Reasonable upper bound
+          expect(r.speedups.theoreticalSpeedup).toBeLessThanOrEqual(maxDim);
         }
       });
     });
@@ -301,7 +308,9 @@ describe('QuantumHybrid (Theoretical)', () => {
     });
 
     it('should complete efficiently', () => {
-      expect(report.executionTimeMs).toBeLessThan(60000);
+      expect(Number.isFinite(report.executionTimeMs)).toBe(true);
+      // Wall-clock budget depends on the machine (#44).
+      if (SPEED_GATES) expect(report.executionTimeMs).toBeLessThan(60000);
     });
   });
 });

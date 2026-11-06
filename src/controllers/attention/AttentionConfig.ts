@@ -39,6 +39,12 @@ export interface AttentionConfig {
     method: 'ppr' | 'random-walk' | 'spectral';
     topK: number;
   };
+  /**
+   * Upper bound on attention scores per call (queryRows × keyRows × numHeads).
+   * Calls above it are rejected with a size-limit error before any buffer is
+   * allocated. Default: 2^25 (about 128 MB of f32 scores).
+   */
+  maxAttentionScores?: number;
   /** Graph partitioning configuration */
   partitioning?: {
     enabled: boolean;
@@ -143,14 +149,25 @@ export class AttentionConfigManager {
    * Validate configuration values
    */
   private validateConfig(config: AttentionConfig): void {
-    if (config.numHeads <= 0) {
-      throw new Error('numHeads must be positive');
+    if (!Number.isInteger(config.numHeads) || config.numHeads <= 0) {
+      throw new Error('numHeads must be a positive integer');
     }
-    if (config.headDim <= 0) {
-      throw new Error('headDim must be positive');
+    if (!Number.isInteger(config.headDim) || config.headDim <= 0) {
+      throw new Error('headDim must be a positive integer');
     }
-    if (config.embedDim <= 0) {
-      throw new Error('embedDim must be positive');
+    if (!Number.isInteger(config.embedDim) || config.embedDim <= 0) {
+      throw new Error('embedDim must be a positive integer');
+    }
+    if (config.embedDim !== config.numHeads * config.headDim) {
+      throw new Error(
+        `embedDim (${config.embedDim}) must equal numHeads × headDim (${config.numHeads} × ${config.headDim} = ${config.numHeads * config.headDim})`
+      );
+    }
+    if (
+      config.maxAttentionScores !== undefined &&
+      (!Number.isFinite(config.maxAttentionScores) || config.maxAttentionScores <= 0)
+    ) {
+      throw new Error('maxAttentionScores must be a positive finite number');
     }
     if (config.dropout !== undefined && (config.dropout < 0 || config.dropout > 1)) {
       throw new Error('dropout must be between 0 and 1');

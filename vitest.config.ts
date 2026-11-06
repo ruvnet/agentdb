@@ -13,6 +13,11 @@ export default defineConfig({
       'tests/browser/attention-browser.test.js',
       'tests/browser/flash-attention-v2-browser.test.js',
       'tests/browser/browser-bundle-v2.test.js',
+      // Benchmark and simulation suites assert machine speed or run for
+      // minutes (#44). Run them with `npm run test:bench` (vitest.bench.config.ts).
+      'benchmarks/**',
+      'simulation/**',
+      'tests/benchmarks/**',
     ],
     coverage: {
       provider: 'v8',

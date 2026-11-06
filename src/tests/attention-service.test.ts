@@ -354,7 +354,7 @@ describe('AttentionService', () => {
   });
 
   describe('Error Handling', () => {
-    it('should handle mismatched dimensions gracefully', async () => {
+    it('should reject key/value row-count mismatch', async () => {
       const seqLen = 4;
       const embedDim = config.embedDim;
 
@@ -362,9 +362,8 @@ describe('AttentionService', () => {
       const key = new Float32Array(seqLen * embedDim);
       const value = new Float32Array((seqLen + 1) * embedDim); // Wrong size
 
-      // Should not throw, but may produce unexpected results
-      const result = await service.multiHeadAttention(query, key, value);
-      expect(result.output).toBeInstanceOf(Float32Array);
+      // Since 3.6.0 (#43): key and value must have the same number of rows.
+      await expect(service.multiHeadAttention(query, key, value)).rejects.toThrow(/dimension mismatch/);
     });
 
     it('should handle empty inputs', async () => {

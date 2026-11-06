@@ -55,41 +55,39 @@ class SeededRandom {
 }
 
 /**
+ * Build the adjacency array SparsificationService and MincutService accept
+ * (`GraphEdges`: index = node id, value = neighbour ids) from undirected
+ * pairs. Each pair is listed in both directions.
+ */
+function toGraphEdges(numNodes: number, pairs: Array<[number, number]>): GraphEdges {
+  const adj: number[][] = Array.from({ length: numNodes }, () => []);
+  for (const [u, v] of pairs) {
+    adj[u].push(v);
+    adj[v].push(u);
+  }
+  return adj;
+}
+
+/**
  * Generate a random graph with configurable density
  */
 export function generateRandomGraph(options: GraphGenerationOptions): GraphEdges {
   const { numNodes, avgDegree = 4, density, seed = 42 } = options;
   const rng = new SeededRandom(seed);
-
-  const edges: GraphEdges = {
-    sourceIds: [],
-    targetIds: [],
-    weights: []
-  };
+  const pairs: Array<[number, number]> = [];
 
   // Calculate probability of edge creation
   const edgeProb = density !== undefined
     ? density
     : avgDegree / (numNodes - 1);
 
-  // Generate edges
   for (let i = 0; i < numNodes; i++) {
     for (let j = i + 1; j < numNodes; j++) {
-      if (rng.next() < edgeProb) {
-        // Add edge i -> j
-        edges.sourceIds.push(i);
-        edges.targetIds.push(j);
-        edges.weights.push(1.0);
-
-        // Add edge j -> i (undirected graph)
-        edges.sourceIds.push(j);
-        edges.targetIds.push(i);
-        edges.weights.push(1.0);
-      }
+      if (rng.next() < edgeProb) pairs.push([i, j]);
     }
   }
 
-  return edges;
+  return toGraphEdges(numNodes, pairs);
 }
 
 /**
@@ -99,23 +97,11 @@ export function generateRandomGraph(options: GraphGenerationOptions): GraphEdges
 export function generateScaleFreeGraph(options: ScaleFreeOptions): GraphEdges {
   const { numNodes, exponent = 2.5, m0 = 3, m = 2, seed = 42 } = options;
   const rng = new SeededRandom(seed);
-
-  const edges: GraphEdges = {
-    sourceIds: [],
-    targetIds: [],
-    weights: []
-  };
+  const pairs: Array<[number, number]> = [];
 
   // Start with complete graph on m0 nodes
   for (let i = 0; i < m0; i++) {
-    for (let j = i + 1; j < m0; j++) {
-      edges.sourceIds.push(i);
-      edges.targetIds.push(j);
-      edges.weights.push(1.0);
-      edges.sourceIds.push(j);
-      edges.targetIds.push(i);
-      edges.weights.push(1.0);
-    }
+    for (let j = i + 1; j < m0; j++) pairs.push([i, j]);
   }
 
   // Track degree of each node for preferential attachment
@@ -150,21 +136,14 @@ export function generateScaleFreeGraph(options: ScaleFreeOptions): GraphEdges {
       }
     }
 
-    // Add edges to selected targets
     for (const target of targets) {
-      edges.sourceIds.push(newNode);
-      edges.targetIds.push(target);
-      edges.weights.push(1.0);
-      edges.sourceIds.push(target);
-      edges.targetIds.push(newNode);
-      edges.weights.push(1.0);
-
+      pairs.push([newNode, target]);
       degrees[newNode] += 2;
       degrees[target] += 2;
     }
   }
 
-  return edges;
+  return toGraphEdges(numNodes, pairs);
 }
 
 /**
@@ -176,34 +155,18 @@ export function generateSmallWorldGraph(options: SmallWorldOptions): GraphEdges 
   const rng = new SeededRandom(seed);
   const k = Math.floor(avgDegree / 2); // Each node connects to k nearest neighbors
 
-  const edges: GraphEdges = {
-    sourceIds: [],
-    targetIds: [],
-    weights: []
-  };
-
-  // Create ring lattice
+  // Ring lattice
+  const pairs: Array<[number, number]> = [];
   for (let i = 0; i < numNodes; i++) {
-    for (let j = 1; j <= k; j++) {
-      const target = (i + j) % numNodes;
-
-      edges.sourceIds.push(i);
-      edges.targetIds.push(target);
-      edges.weights.push(1.0);
-      edges.sourceIds.push(target);
-      edges.targetIds.push(i);
-      edges.weights.push(1.0);
-    }
+    for (let j = 1; j <= k; j++) pairs.push([i, (i + j) % numNodes]);
   }
 
   // Rewire edges with probability p
   const edgeSet = new Set<string>();
-  for (let i = 0; i < edges.sourceIds.length; i += 2) {
-    const source = edges.sourceIds[i];
-    const target = edges.targetIds[i];
+  for (const pair of pairs) {
+    const [source, target] = pair;
 
     if (source < target && rng.next() < rewiringProb) {
-      // Find new random target
       let newTarget;
       do {
         newTarget = rng.nextInt(numNodes);
@@ -213,21 +176,19 @@ export function generateSmallWorldGraph(options: SmallWorldOptions): GraphEdges 
         edgeSet.has(`${newTarget}-${source}`)
       );
 
-      // Replace edge
-      edges.targetIds[i] = newTarget;
-      edges.sourceIds[i + 1] = newTarget;
-
+      pair[1] = newTarget;
       edgeSet.add(`${source}-${newTarget}`);
     } else {
       edgeSet.add(`${source}-${target}`);
     }
   }
 
-  return edges;
+  return toGraphEdges(numNodes, pairs);
 }
 
 /**
- * Calculate graph statistics
+ * Calculate graph statistics. Every index of the adjacency array is a node,
+ * including isolated ones.
  */
 export function calculateGraphStats(edges: GraphEdges): {
   numNodes: number;
@@ -237,56 +198,30 @@ export function calculateGraphStats(edges: GraphEdges): {
   maxDegree: number;
   minDegree: number;
 } {
-  // Find number of nodes
-  const nodeSet = new Set<number>();
-  for (const id of edges.sourceIds) nodeSet.add(id);
-  for (const id of edges.targetIds) nodeSet.add(id);
-  const numNodes = nodeSet.size;
+  const numNodes = edges.length;
+  const degreeValues = edges.map((neighbors) => neighbors?.length ?? 0);
 
-  // Count edges (undirected, so divide by 2)
-  const numEdges = edges.sourceIds.length / 2;
+  // Undirected: each edge is listed in both endpoints' neighbour lists
+  const totalDegree = degreeValues.reduce((a, b) => a + b, 0);
+  const numEdges = totalDegree / 2;
+  const avgDegree = numNodes > 0 ? totalDegree / numNodes : 0;
+  const maxDegree = degreeValues.reduce((a, b) => Math.max(a, b), 0);
+  const minDegree = degreeValues.reduce((a, b) => Math.min(a, b), numNodes > 0 ? Infinity : 0);
 
-  // Calculate degree distribution
-  const degrees = new Map<number, number>();
-  for (const id of edges.sourceIds) {
-    degrees.set(id, (degrees.get(id) || 0) + 1);
-  }
-
-  const degreeValues = Array.from(degrees.values());
-  const avgDegree = degreeValues.reduce((a, b) => a + b, 0) / degreeValues.length;
-  const maxDegree = Math.max(...degreeValues);
-  const minDegree = Math.min(...degreeValues);
-
-  // Calculate density
   const maxPossibleEdges = (numNodes * (numNodes - 1)) / 2;
-  const density = numEdges / maxPossibleEdges;
+  const density = maxPossibleEdges > 0 ? numEdges / maxPossibleEdges : 0;
 
-  return {
-    numNodes,
-    numEdges,
-    avgDegree,
-    density,
-    maxDegree,
-    minDegree
-  };
+  return { numNodes, numEdges, avgDegree, density, maxDegree, minDegree };
 }
 
 /**
- * Convert GraphEdges to adjacency list for efficient traversal
+ * Convert GraphEdges to a Map-based adjacency list
  */
 export function toAdjacencyList(edges: GraphEdges): Map<number, number[]> {
   const adjList = new Map<number, number[]>();
-
-  for (let i = 0; i < edges.sourceIds.length; i++) {
-    const source = edges.sourceIds[i];
-    const target = edges.targetIds[i];
-
-    if (!adjList.has(source)) {
-      adjList.set(source, []);
-    }
-    adjList.get(source)!.push(target);
-  }
-
+  edges.forEach((neighbors, node) => {
+    if (neighbors && neighbors.length > 0) adjList.set(node, [...neighbors]);
+  });
   return adjList;
 }
 
