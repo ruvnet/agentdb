@@ -21,6 +21,10 @@ vi.mock('@ruvector/rvf', () => ({
 }));
 
 import { RvfBackend } from '../../src/backends/rvf/RvfBackend.js';
+import { closeRvfBackendsAfterEach } from './helpers/close-rvf-backends.js';
+
+// Close every store each test opens (they are in-memory, each with a temp dir).
+closeRvfBackendsAfterEach();
 
 const vec = (x: number) => new Float32Array([x, 1, 0, 0]);
 
