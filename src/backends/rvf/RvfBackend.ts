@@ -157,11 +157,52 @@ function isLockHeld(err: unknown): boolean {
  */
 const pendingCloses = new Map<string, Promise<void>>();
 
-/** Best-effort recursive delete of a backend-owned temp directory. */
-function fsRemove(dir: string): void {
-  import('fs')
-    .then((fs) => fs.rmSync(dir, { recursive: true, force: true }))
-    .catch((err: Error) => console.warn('[RvfBackend] Temp store cleanup failed:', err.message));
+// ─── Temp stores of in-memory backends ───
+// Every in-memory RvfBackend owns a private temp directory. The ones still
+// open are tracked here so a process that exits (or gets SIGINT/SIGTERM)
+// without closing them does not leave them in the temp dir. One set of
+// listeners serves every instance.
+
+let nodeFs: typeof import('fs') | null = null;
+const liveTempDirs = new Set<string>();
+let exitHookInstalled = false;
+
+/** Synchronous, idempotent recursive delete of a backend-owned temp directory. */
+function removeTempDir(dir: string): void {
+  liveTempDirs.delete(dir);
+  try {
+    nodeFs?.rmSync(dir, { recursive: true, force: true });
+  } catch (err) {
+    console.warn('[RvfBackend] Temp store cleanup failed:', (err as Error).message);
+  }
+}
+
+function removeAllTempDirs(): void {
+  for (const dir of [...liveTempDirs]) removeTempDir(dir);
+}
+
+function installExitHook(): void {
+  if (exitHookInstalled) return;
+  if (typeof process === 'undefined' || typeof process.on !== 'function') return;
+  exitHookInstalled = true;
+  process.once('exit', removeAllTempDirs);
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    const onSignal = () => {
+      removeAllTempDirs();
+      // A listener disables the default "terminate"; restore it unless the
+      // host installed its own handler for this signal.
+      if (process.listenerCount(signal) === 1) {
+        process.removeListener(signal, onSignal);
+        process.kill(process.pid, signal);
+      }
+    };
+    process.on(signal, onSignal);
+  }
+}
+
+/** Test hook: temp directories of in-memory stores not yet closed. */
+export function liveRvfTempDirs(): ReadonlySet<string> {
+  return liveTempDirs;
 }
 
 async function awaitPendingClose(path: string): Promise<void> {
@@ -242,7 +283,10 @@ export class RvfBackend implements VectorBackendAsync {
     if (this.inMemory && !this.ownedTempDir) {
       // rvf has no in-memory store: use a fresh private directory per instance.
       const [fsMod, osMod, pathMod] = await Promise.all([import('fs'), import('os'), import('path')]);
+      nodeFs = fsMod;
       this.ownedTempDir = fsMod.mkdtempSync(pathMod.join(osMod.tmpdir(), 'agentdb-rvf-'));
+      liveTempDirs.add(this.ownedTempDir);
+      installExitHook();
       this.storagePath = pathMod.join(this.ownedTempDir, 'store.rvf');
     }
     const storagePath = this.storagePath;
@@ -314,7 +358,7 @@ export class RvfBackend implements VectorBackendAsync {
     if (!dir) return;
     this.ownedTempDir = null;
     if (this.inMemory) this.storagePath = '';
-    fsRemove(dir);
+    removeTempDir(dir);
   }
 
   // ─── Sync VectorBackend interface (queues writes, cached reads) ───
@@ -409,10 +453,7 @@ export class RvfBackend implements VectorBackendAsync {
     this.ownedTempDir = null;
     this.storagePath = path;
     this.initialized = true;
-    if (tempDir) {
-      const fs = await import('fs');
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    }
+    if (tempDir) removeTempDir(tempDir);
   }
 
   /**
@@ -432,12 +473,12 @@ export class RvfBackend implements VectorBackendAsync {
         console.warn('[RvfBackend] Close error:', err.message);
       }).finally(() => {
         if (pendingCloses.get(path) === p) pendingCloses.delete(path);
-        if (tempDir) fsRemove(tempDir);
+        if (tempDir) removeTempDir(tempDir);
       });
       pendingCloses.set(path, p);
       this.db = null;
     } else if (tempDir) {
-      fsRemove(tempDir);
+      removeTempDir(tempDir);
     }
     this.pending = [];
     this.initialized = false;
@@ -459,8 +500,7 @@ export class RvfBackend implements VectorBackendAsync {
       const dir = this.ownedTempDir;
       this.ownedTempDir = null;
       if (this.inMemory) this.storagePath = '';
-      const fs = await import('fs');
-      fs.rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
     this.pending = [];
     this.initialized = false;

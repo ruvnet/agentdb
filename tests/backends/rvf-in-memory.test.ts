@@ -168,3 +168,74 @@ describe('in-memory AgentDB on the rvf backend', () => {
     }
   }, 60_000);
 });
+
+/**
+ * Run a child with a private TMPDIR that opens in-memory stores and never
+ * closes them, then ends the way `mode` says. Returns what is left in TMPDIR.
+ */
+async function runUnclosedChild(mode: 'exit' | 'return' | 'SIGTERM' | 'SIGINT') {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agentdb-exit-hook-'));
+  const scriptDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentdb-exit-script-'));
+  const script = path.join(scriptDir, 'child.mts');
+  fs.writeFileSync(script, `
+    import { RvfBackend } from '${ROOT}/src/backends/rvf/RvfBackend.ts';
+    const stores = [new RvfBackend({ dimension: 4 }), new RvfBackend({ dimension: 4, storagePath: ':memory:' })];
+    for (const s of stores) {
+      await s.initialize();
+      await s.insertAsync('x', new Float32Array([1, 0, 0, 0]));
+    }
+    // Many instances, one set of listeners.
+    for (let i = 0; i < 20; i++) await new RvfBackend({ dimension: 4 }).initialize();
+    const listeners = { exit: process.listenerCount('exit'), SIGINT: process.listenerCount('SIGINT'), SIGTERM: process.listenerCount('SIGTERM') };
+    process.stderr.write('READY ' + JSON.stringify(listeners) + '\\n');
+    const mode = ${JSON.stringify(mode)};
+    if (mode === 'exit') process.exit(0);
+    if (mode !== 'return') setInterval(() => {}, 1000); // wait for the signal
+  `);
+  try {
+    const child = spawn(TSX, [script], {
+      env: { ...process.env, TMPDIR: tmp, TMP: tmp, TEMP: tmp },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    let listeners: Record<string, number> | null = null;
+    child.stdout.on('data', () => {});
+    child.stderr.on('data', (d) => {
+      stderr += d;
+      const line = stderr.split('\n').find((l) => l.startsWith('READY '));
+      if (line && !listeners) {
+        listeners = JSON.parse(line.slice('READY '.length));
+        if (mode === 'SIGTERM' || mode === 'SIGINT') child.kill(mode);
+      }
+    });
+    const timer = setTimeout(() => child.kill('SIGKILL'), 45_000);
+    const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>((resolve) =>
+      child.on('close', (c, s) => resolve([c, s])),
+    );
+    clearTimeout(timer);
+    // tsx's own cache may land in TMPDIR; only our store directories matter.
+    const left = fs.readdirSync(tmp).filter((f) => f.startsWith('agentdb-rvf-'));
+    return { code, signal, listeners, left, stderr };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(scriptDir, { recursive: true, force: true });
+  }
+}
+
+describe('in-memory stores a process never closes', () => {
+  it.each(['exit', 'return'] as const)('are removed when the process ends (%s)', async (mode) => {
+    const r = await runUnclosedChild(mode);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.listeners, r.stderr).toEqual({ exit: expect.any(Number), SIGINT: 1, SIGTERM: 1 });
+    expect(r.left).toEqual([]);
+  }, 60_000);
+
+  it.each(['SIGTERM', 'SIGINT'] as const)('are removed on %s, and the signal still terminates', async (sig) => {
+    const r = await runUnclosedChild(sig);
+    expect(r.listeners, r.stderr).not.toBeNull();
+    expect(r.left).toEqual([]);
+    // The default action still runs: tsx reports the child's signal as 128 + signo.
+    const signo = sig === 'SIGTERM' ? 15 : 2;
+    expect(r.signal === sig || r.code === 128 + signo, `code=${r.code} signal=${r.signal}`).toBe(true);
+  }, 60_000);
+});

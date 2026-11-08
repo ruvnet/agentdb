@@ -56,6 +56,10 @@ vi.mock('@ruvector/rvf', () => ({
 
 // Must import after mock setup
 import { RvfBackend } from '../../src/backends/rvf/RvfBackend.js';
+import { closeRvfBackendsAfterEach } from './helpers/close-rvf-backends.js';
+
+// Close every store each test opens (they are in-memory, each with a temp dir).
+closeRvfBackendsAfterEach();
 
 describe('ADR-007 Phase 1: RvfBackend Extended APIs', () => {
   beforeEach(() => {

@@ -42,7 +42,7 @@ jobs:
       - name: Typecheck and build
         run: npm run build:ts && npm run copy:schemas
       - name: CRUD, hybrid retrieval, ecosystem integration (incl. ruvllm API contract), graph, attention validation and RVF flush unit tests
-        run: npx vitest run tests/unit/controllers/crud-adr017.test.ts tests/unit/controllers/ReflexionMemory-hybrid.test.ts tests/unit/controllers/episode-rerank.test.ts tests/unit/search tests/unit/integrations tests/unit/controllers/MincutService.test.ts tests/unit/sparsification.test.ts tests/unit/node-runtime-floor.test.ts tests/better-sqlite3-statement-gc.test.ts tests/backends/federated-session.test.ts tests/backends/federated-coordinator-args.test.ts tests/unit/attention-edge-cases.test.ts tests/backends/rvf-flush-retry.test.ts tests/backends/rvf-backend-extended.test.ts tests/backends/rvf-04-metadata.test.ts tests/backends/rvf-absent-fallback.test.ts
+        run: npx vitest run tests/unit/controllers/crud-adr017.test.ts tests/unit/controllers/ReflexionMemory-hybrid.test.ts tests/unit/controllers/episode-rerank.test.ts tests/unit/search tests/unit/integrations tests/unit/controllers/MincutService.test.ts tests/unit/sparsification.test.ts tests/unit/node-runtime-floor.test.ts tests/better-sqlite3-statement-gc.test.ts tests/backends/federated-session.test.ts tests/backends/federated-coordinator-args.test.ts tests/unit/attention-edge-cases.test.ts tests/backends/rvf-flush-retry.test.ts tests/backends/rvf-backend-extended.test.ts tests/backends/rvf-04-metadata.test.ts tests/backends/rvf-absent-fallback.test.ts tests/backends/rvf-in-memory.test.ts
       - name: MCP stdio purity
         run: npm run test:mcp-stdio
       - name: MCP CRUD end-to-end (sql.js and better-sqlite3)

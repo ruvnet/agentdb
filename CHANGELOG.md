@@ -5,6 +5,14 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.2] - 2026-11-08
+
+### Fixed
+
+- **In-memory RVF stores that are never closed no longer leak temp directories.** Since 3.7.1 each in-memory `RvfBackend` owns a private temp directory, removed on close; a process that exited without closing left it behind (two test files alone left 37 per run). Open in-memory stores are now tracked and removed synchronously when the process exits or receives SIGINT/SIGTERM. One set of listeners is registered for all instances (not one per instance). The cleanup is idempotent, and when the host has no handler of its own for the signal, the signal's default action (terminate) still runs. Stores with an explicit `storagePath` are never touched.
+- Closing an in-memory store removes its directory synchronously (it was a deferred dynamic import).
+- `tests/backends/rvf-backend-extended.test.ts` and `rvf-flush-retry.test.ts` close every store they open.
+
 ## [3.7.1] - 2026-11-08
 
 ### Fixed
