@@ -9,8 +9,11 @@
  * - PPR-based node importance scoring
  * - Random walk sampling
  * - Spectral sparsification
- * - PPR through @ruvector/graph-transformer (NAPI) or ruvector-graph-transformer-wasm,
- *   with a JavaScript fallback (ADR-018)
+ * - PPR through @ruvnet/sublinear-core, then @ruvector/graph-transformer (NAPI) or
+ *   ruvector-graph-transformer-wasm, with an in-tree JavaScript fallback (ADR-018).
+ *   sublinear-core and the fallback compute the same standard PPR (dangling mass
+ *   returns to the source, scores sum to 1); graph-transformer keeps dangling mass
+ *   on the sink and always runs 20 iterations.
  * - Zero-copy operations where supported
  *
  * Based on:
@@ -24,6 +27,12 @@
 import type { GraphEdges, GraphInput } from '../types/graph.js';
 import { normalizeGraphEdges } from '../utils/graph-edges.js';
 import { loadPprBackend, toNativeAdjacency, type PprBackend } from './integrations/PprNativeAdapter.js';
+import {
+  loadSublinearCore,
+  personalizedPageRankInTree,
+  type PprRun,
+  type SublinearCorePpr,
+} from './integrations/SublinearCoreAdapter.js';
 
 // Re-export for convenience
 export type { GraphEdges, GraphInput };
@@ -39,7 +48,7 @@ export interface SparsificationConfig {
   numWalks?: number;
   /** Random walk length (default: 10) */
   walkLength?: number;
-  /** Convergence threshold for PPR (default: 1e-6) */
+  /** Convergence threshold for PPR: L1 change between iterations (default: 1e-6) */
   convergenceThreshold?: number;
   /** Maximum PPR iterations (default: 20) */
   maxIterations?: number;
@@ -69,6 +78,7 @@ export interface SparsificationResult {
  * SparsificationService - Reduces graph size while preserving structure
  */
 export class SparsificationService {
+  private sublinearCore: SublinearCorePpr | null = null;
   private pprBackend: PprBackend | null = null;
   private initialized: boolean = false;
   private config: SparsificationConfig;
@@ -92,9 +102,10 @@ export class SparsificationService {
       return;
     }
 
+    this.sublinearCore = await loadSublinearCore();
     this.pprBackend = await loadPprBackend();
-    if (!this.pprBackend) {
-      console.warn('⚠️  SparsificationService: @ruvector/graph-transformer not available, using JavaScript fallback');
+    if (!this.sublinearCore && !this.pprBackend) {
+      console.warn('⚠️  SparsificationService: @ruvnet/sublinear-core and @ruvector/graph-transformer not available, using JavaScript fallback');
     }
 
     this.initialized = true;
@@ -123,6 +134,15 @@ export class SparsificationService {
 
     if (!this.initialized) await this.initialize();
     const n = edges.length;
+    const validSource = n > 0 && Number.isInteger(sourceNode) && sourceNode >= 0 && sourceNode < n;
+    if (this.sublinearCore && validSource) {
+      try {
+        const run = this.sublinearCore.run(sourceNode, toNativeAdjacency(edges), alpha, this.pprRunOptions());
+        return this.pprResult(run, edges, topK, 'ppr-sublinear-core', startTime);
+      } catch (err) {
+        console.warn('sublinear-core PPR failed, falling back:', (err as Error).message);
+      }
+    }
     if (this.pprBackend && n > 0 && Number.isInteger(sourceNode) && sourceNode >= 0 && sourceNode < n) {
       try {
         const raw = this.pprBackend.scores(sourceNode, toNativeAdjacency(edges), alpha);
@@ -287,10 +307,42 @@ export class SparsificationService {
       .map(({ idx }) => idx);
   }
 
+  private pprRunOptions(): { maxIterations: number; tolerance: number } {
+    return {
+      maxIterations: this.config.maxIterations ?? 20,
+      tolerance: this.config.convergenceThreshold ?? 1e-6,
+    };
+  }
+
+  private pprResult(
+    run: PprRun,
+    edges: GraphEdges,
+    topK: number,
+    method: string,
+    startTime: number
+  ): SparsificationResult {
+    const scores = Float32Array.from(run.scores);
+    const totalEdges = this.countTotalEdges(edges);
+    return {
+      topKIndices: this.getTopK(scores, topK),
+      scores,
+      sparsityRatio: totalEdges > 0 ? topK / totalEdges : 0,
+      method,
+      executionTimeMs: performance.now() - startTime,
+      metadata: {
+        iterations: run.iterations,
+        convergence: run.delta,
+        totalNodes: edges.length,
+        totalEdges,
+      },
+    };
+  }
+
   /**
    * PPR JavaScript fallback implementation
    *
-   * Power iteration method for computing PageRank with restart.
+   * Power iteration over out-edges in float64, dangling mass back to the
+   * source; the same algorithm as @ruvnet/sublinear-core.
    */
   private pprFallback(
     sourceNode: number,
@@ -299,75 +351,8 @@ export class SparsificationService {
     alpha: number
   ): SparsificationResult {
     const startTime = performance.now();
-    const n = edges.length;
-
-    // Handle empty graph
-    if (n === 0) {
-      return {
-        topKIndices: [],
-        scores: new Float32Array(0),
-        sparsityRatio: 0,
-        method: 'ppr-fallback',
-        executionTimeMs: performance.now() - startTime,
-        metadata: {
-          totalNodes: 0,
-          totalEdges: 0,
-        },
-      };
-    }
-
-    const scores = new Float32Array(n);
-    scores[sourceNode] = 1.0;
-
-    let iterations = 0;
-    let convergence = 0;
-
-    // Power iteration
-    for (let iter = 0; iter < (this.config.maxIterations || 20); iter++) {
-      const newScores = new Float32Array(n);
-      let maxDelta = 0;
-
-      for (let i = 0; i < n; i++) {
-        // Teleport component
-        newScores[i] = alpha * (i === sourceNode ? 1.0 : 0.0);
-
-        // Random walk component
-        for (let j = 0; j < n; j++) {
-          const neighbors = edges[j] || [];
-          if (neighbors.includes(i) && neighbors.length > 0) {
-            newScores[i] += (1 - alpha) * scores[j] / neighbors.length;
-          }
-        }
-
-        maxDelta = Math.max(maxDelta, Math.abs(newScores[i] - scores[i]));
-      }
-
-      scores.set(newScores);
-      iterations = iter + 1;
-      convergence = maxDelta;
-
-      // Check convergence
-      if (maxDelta < (this.config.convergenceThreshold || 1e-6)) {
-        break;
-      }
-    }
-
-    const topKIndices = this.getTopK(scores, topK);
-    const executionTimeMs = performance.now() - startTime;
-
-    return {
-      topKIndices,
-      scores,
-      sparsityRatio: topK / this.countTotalEdges(edges),
-      method: 'ppr-fallback',
-      executionTimeMs,
-      metadata: {
-        iterations,
-        convergence,
-        totalNodes: n,
-        totalEdges: this.countTotalEdges(edges),
-      },
-    };
+    const run = personalizedPageRankInTree(sourceNode, toNativeAdjacency(edges), alpha, this.pprRunOptions());
+    return this.pprResult(run, edges, topK, 'ppr-fallback', startTime);
   }
 
   /**
@@ -413,8 +398,8 @@ export class SparsificationService {
   }
 
   /** Which implementation answers PPR queries. */
-  getPprRuntime(): 'napi' | 'wasm' | 'fallback' {
-    return this.pprBackend?.runtime ?? 'fallback';
+  getPprRuntime(): 'sublinear-core' | 'napi' | 'wasm' | 'fallback' {
+    return this.sublinearCore?.runtime ?? this.pprBackend?.runtime ?? 'fallback';
   }
 
   /**
