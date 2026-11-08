@@ -44,7 +44,10 @@ import {
 
 /** RVF-specific configuration options */
 export interface RvfConfig extends VectorConfig {
-  /** Path to .rvf store file */
+  /**
+   * Path to .rvf store file. Omitted or ':memory:': a private temp directory
+   * that close()/closeAsync() remove; nothing is written to the working directory.
+   */
   storagePath?: string;
   /** RVF sub-backend: 'auto' | 'node' | 'wasm' */
   rvfBackend?: 'auto' | 'node' | 'wasm';
@@ -154,6 +157,13 @@ function isLockHeld(err: unknown): boolean {
  */
 const pendingCloses = new Map<string, Promise<void>>();
 
+/** Best-effort recursive delete of a backend-owned temp directory. */
+function fsRemove(dir: string): void {
+  import('fs')
+    .then((fs) => fs.rmSync(dir, { recursive: true, force: true }))
+    .catch((err: Error) => console.warn('[RvfBackend] Temp store cleanup failed:', err.message));
+}
+
 async function awaitPendingClose(path: string): Promise<void> {
   const p = pendingCloses.get(path);
   if (p) await p;
@@ -183,6 +193,9 @@ export class RvfBackend implements VectorBackendAsync {
   private config: RvfConfig;
   private initialized = false;
   private storagePath: string;
+  /** True when no path was given: the store lives in ownedTempDir. */
+  private readonly inMemory: boolean;
+  private ownedTempDir: string | null = null;
 
   // Sync insert queue: buffers sync insert() calls, flushed on threshold or explicit flush()
   private pending: IngestItem[] = [];
@@ -210,7 +223,9 @@ export class RvfBackend implements VectorBackendAsync {
     this.dim = dimension;
     this.metricType = config.metric ?? 'cosine';
     this.config = { ...config, dimension, dimensions: dimension } as RvfConfig;
-    this.storagePath = (config as RvfConfig).storagePath ?? 'agentdb.rvf';
+    const configuredPath = (config as RvfConfig).storagePath;
+    this.inMemory = !configuredPath || configuredPath === ':memory:';
+    this.storagePath = this.inMemory ? '' : configuredPath!;
     this.batchThreshold = Math.min(
       Math.max(1, (config as RvfConfig).batchThreshold ?? DEFAULT_BATCH_THRESHOLD),
       MAX_BATCH_SIZE,
@@ -224,8 +239,14 @@ export class RvfBackend implements VectorBackendAsync {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
+    if (this.inMemory && !this.ownedTempDir) {
+      // rvf has no in-memory store: use a fresh private directory per instance.
+      const [fsMod, osMod, pathMod] = await Promise.all([import('fs'), import('os'), import('path')]);
+      this.ownedTempDir = fsMod.mkdtempSync(pathMod.join(osMod.tmpdir(), 'agentdb-rvf-'));
+      this.storagePath = pathMod.join(this.ownedTempDir, 'store.rvf');
+    }
     const storagePath = this.storagePath;
-    if (storagePath !== ':memory:') {
+    if (!this.inMemory) {
       validatePath(storagePath);
     }
 
@@ -234,6 +255,7 @@ export class RvfBackend implements VectorBackendAsync {
     try {
       ({ RvfDatabase } = await import('@ruvector/rvf'));
     } catch (error) {
+      this.releaseTempStore();
       throw new Error(
         `RVF backend initialization failed.\n` +
         `Install with: npm install @ruvector/rvf\n` +
@@ -250,7 +272,7 @@ export class RvfBackend implements VectorBackendAsync {
       const rvfMetric = this.metricType === 'ip' ? 'dotproduct' : this.metricType;
 
       const fs = await import('fs');
-      const fileExists = storagePath !== ':memory:' && fs.existsSync(storagePath);
+      const fileExists = fs.existsSync(storagePath);
 
       if (fileExists) {
         this.db = await RvfDatabase.open(storagePath, rvfBackendType);
@@ -281,8 +303,18 @@ export class RvfBackend implements VectorBackendAsync {
 
       this.initialized = true;
     } catch (error) {
+      this.releaseTempStore();
       throw openError(storagePath, error);
     }
+  }
+
+  /** Remove the private temp directory of an in-memory store, if any. */
+  private releaseTempStore(): void {
+    const dir = this.ownedTempDir;
+    if (!dir) return;
+    this.ownedTempDir = null;
+    if (this.inMemory) this.storagePath = '';
+    fsRemove(dir);
   }
 
   // ─── Sync VectorBackend interface (queues writes, cached reads) ───
@@ -373,8 +405,14 @@ export class RvfBackend implements VectorBackendAsync {
     }
     const status = await this.db.status();
     this.cachedCount = status.totalVectors ?? 0;
+    const tempDir = this.ownedTempDir;
+    this.ownedTempDir = null;
     this.storagePath = path;
     this.initialized = true;
+    if (tempDir) {
+      const fs = await import('fs');
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   }
 
   /**
@@ -384,15 +422,22 @@ export class RvfBackend implements VectorBackendAsync {
    * RvfBackend waits for this close to finish.
    */
   close(): void {
+    // An in-memory store's directory goes once rvf has released the file.
+    const tempDir = this.ownedTempDir;
+    this.ownedTempDir = null;
+    const path = this.storagePath;
+    if (this.inMemory) this.storagePath = '';
     if (this.db) {
-      const path = this.storagePath;
       const p: Promise<void> = this.db.close().catch((err: Error) => {
         console.warn('[RvfBackend] Close error:', err.message);
       }).finally(() => {
         if (pendingCloses.get(path) === p) pendingCloses.delete(path);
+        if (tempDir) fsRemove(tempDir);
       });
       pendingCloses.set(path, p);
       this.db = null;
+    } else if (tempDir) {
+      fsRemove(tempDir);
     }
     this.pending = [];
     this.initialized = false;
@@ -409,6 +454,13 @@ export class RvfBackend implements VectorBackendAsync {
       const db = this.db;
       this.db = null;
       await db.close();
+    }
+    if (this.ownedTempDir) {
+      const dir = this.ownedTempDir;
+      this.ownedTempDir = null;
+      if (this.inMemory) this.storagePath = '';
+      const fs = await import('fs');
+      fs.rmSync(dir, { recursive: true, force: true });
     }
     this.pending = [];
     this.initialized = false;

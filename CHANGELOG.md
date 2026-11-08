@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Personalized PageRank scores sum to 1.** The JavaScript fallback in `SparsificationService` dropped the mass of nodes with no out-edges, so its scores summed to about 0.73-0.86 on graphs with sinks (0.729 at n=1,000 and 0.756 at n=10,000 on a random graph with 10% sinks). Dangling mass now returns to the source, as in standard PPR.
+- **In-memory RVF stores are in memory.** An `RvfBackend` with no `storagePath` opened `./agentdb.rvf` in the working directory, so an in-memory `AgentDB` on the rvf backend reopened whatever an earlier run left there and shared it with every other in-memory instance. `storagePath: ':memory:'` created a file literally named `:memory:` (plus `:memory:.idmap.json`). rvf has no in-memory mode, so both now use a fresh private temp directory per instance, removed by `closeAsync()` (and by `close()` once rvf releases the file). Nothing is written to the working directory unless a path is given. `AgentDB.close()` now awaits `closeAsync()` when the backend has it.
 - **The fallback is linear in the graph size.** It scanned every adjacency list for every node (`O(n^2 * degree)` per iteration): 87 ms at n=1,000 and 11.9 s at n=10,000. It now pushes over out-edges in float64: 0.25 ms and 2.9 ms at the default 20 iterations.
 
 ### Changed
