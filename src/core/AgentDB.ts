@@ -164,9 +164,18 @@ export class AgentDB {
 
   async close(): Promise<void> {
     if (this.vectorBackend) {
-      const backend = this.vectorBackend as VectorBackend & { flush?: () => Promise<void> };
+      const backend = this.vectorBackend as VectorBackend & {
+        flush?: () => Promise<void>;
+        closeAsync?: () => Promise<void>;
+      };
       await backend.flush?.().catch(() => { /* already logged by the backend */ });
-      backend.close();
+      // closeAsync resolves once the store is released (and an in-memory
+      // store's temp directory removed); close() only starts that.
+      if (typeof backend.closeAsync === 'function') {
+        await backend.closeAsync().catch(() => backend.close());
+      } else {
+        backend.close();
+      }
     }
     if (this.db) {
       this.db.close();

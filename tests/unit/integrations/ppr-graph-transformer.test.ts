@@ -4,11 +4,12 @@
  * Both packages are imported directly first: a missing package fails here
  * instead of passing on the JavaScript fallback.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { GraphTransformer } from '@ruvector/graph-transformer';
 import * as gtWasm from 'ruvector-graph-transformer-wasm';
 import { SparsificationService } from '../../../src/controllers/SparsificationService.js';
 import { loadNapi, loadWasm, toNativeAdjacency } from '../../../src/controllers/integrations/PprNativeAdapter.js';
+import { resetSublinearCore } from '../../../src/controllers/integrations/SublinearCoreAdapter.js';
 import type { GraphEdges } from '../../../src/types/graph.js';
 
 function randomGraph(n: number, deg: number, seed: number): GraphEdges {
@@ -41,6 +42,10 @@ function service(topK = 10) {
 }
 
 describe('@ruvector/graph-transformer PPR integration', () => {
+  // @ruvnet/sublinear-core is preferred when installed; hide it so these cases reach graph-transformer.
+  beforeAll(() => resetSublinearCore(null));
+  afterAll(() => resetSublinearCore());
+
   it('exposes pprScores on the NAPI class and ppr_scores on the WASM class', () => {
     expect(typeof new GraphTransformer().pprScores).toBe('function');
     expect(typeof gtWasm.JsGraphTransformer).toBe('function');
@@ -93,17 +98,15 @@ describe('@ruvector/graph-transformer PPR integration', () => {
     expect(result.method).toBe('ppr-fallback');
   });
 
-  it('is faster than the JavaScript fallback on a 2,000-node graph', async () => {
+  // The JavaScript fallback is now O(iterations * (n + edges)) like the native code,
+  // so a speed race between them is noise; agreement on a large graph is what matters.
+  it('matches the JavaScript fallback on a 2,000-node graph without sinks', async () => {
     const svc = service(20);
     await svc.initialize();
     const edges = randomGraph(2000, 3, 11);
-    const t0 = performance.now();
     const native = await svc.pprSparsification(0, edges, 20, 0.15);
-    const tNative = performance.now() - t0;
-    const t1 = performance.now();
-    (svc as any).pprFallback(0, edges, 20, 0.15);
-    const tJs = performance.now() - t1;
+    const js = (svc as any).pprFallback(0, edges, 20, 0.15);
     expect(native.method).toBe('ppr-napi');
-    expect(tNative).toBeLessThan(tJs);
+    expect(maxAbsDiff(native.scores, js.scores)).toBeLessThan(1e-5);
   });
 });
