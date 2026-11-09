@@ -1,6 +1,6 @@
 {
   "name": "agentdb",
-  "version": "3.7.3",
+  "version": "3.7.4",
   "description": "Agent memory and vector database for AI agents: single-file HNSW search, episodic memory, causal graph, reinforcement learning and MCP tools.",
   "type": "module",
   "main": "dist/src/index.js",
@@ -158,8 +158,8 @@
     "@ruvector/rabitq-wasm": "^0.1.2",
     "@ruvector/router": "^0.1.15",
     "@ruvector/ruvllm": "^4.1.0",
-    "@ruvector/rvf": "^0.4.7",
-    "@ruvector/rvf-node": "^0.4.2",
+    "@ruvector/rvf": "^0.4.9",
+    "@ruvector/rvf-node": "^0.4.4",
     "@ruvector/rvf-solver": "^0.1.7",
     "@ruvector/rvf-wasm": "^0.1.7",
     "@ruvector/sona": "^0.1.11",

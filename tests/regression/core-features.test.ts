@@ -46,7 +46,7 @@ describe('Core Features Regression Tests', () => {
     // Initialize embedding service
     embedder = new EmbeddingService({
       model: 'Xenova/all-MiniLM-L6-v2',
-      dimensions: 384,
+      dimension: 384,
       provider: 'transformers'
     });
     await embedder.initialize();
@@ -224,8 +224,8 @@ describe('Core Features Regression Tests', () => {
   });
 
   describe('Causal Memory Graph', () => {
-    it('should add causal edges', () => {
-      const edgeId = causalGraph.addCausalEdge({
+    it('should add causal edges', async () => {
+      const edgeId = await causalGraph.addCausalEdge({
         fromMemoryId: 1,
         fromMemoryType: 'episode',
         toMemoryId: 2,

@@ -146,6 +146,27 @@ function isTypeConflict(err: unknown): boolean {
     /MetadataTypeConflict|0xff09|does not match the type already stored/i.test((err as Error)?.message ?? '');
 }
 
+/**
+ * rvf rejects a batch that names the same id twice (InvalidManifest 0x0105,
+ * rvf 0.4.7 and 0.4.9), which would wedge the write queue. Keep each id's
+ * last write, in order.
+ */
+function lastWriteWins(entries: IngestItem[]): IngestItem[] {
+  if (entries.length < 2) return entries;
+  const last = new Map<string, number>();
+  entries.forEach((e, i) => last.set(e.id, i));
+  if (last.size === entries.length) return entries;
+  return entries.filter((e, i) => last.get(e.id) === i);
+}
+
+/** Remove the items of `done` from `queue` in place, by identity. */
+function dropItems(queue: IngestItem[], done: IngestItem[]): void {
+  const gone = new Set(done);
+  let w = 0;
+  for (const item of queue) if (!gone.has(item)) queue[w++] = item;
+  queue.length = w;
+}
+
 function isLockHeld(err: unknown): boolean {
   return errorCode(err) === RVF_LOCK_HELD || /LockHeld|0x0300/.test((err as Error)?.message ?? '');
 }
@@ -406,14 +427,40 @@ export class RvfBackend implements VectorBackendAsync {
   }
 
   remove(id: string): boolean {
-    // Queue a delete -- sync interface cannot await
+    // Sync interface cannot await: drop queued writes of the id now, delete
+    // the stored copy in the background.
     this.ensureInitialized();
     validateId(id);
-    // Fire-and-forget with error logging
-    this.db.delete([id]).catch((err: Error) => {
+    this.dropQueued(id);
+    this.deleteAfterFlush(id).catch((err: Error) => {
       console.error('[RvfBackend] Delete failed:', err.message);
     });
     return true;
+  }
+
+  /** Remove queued (not yet ingested) writes of `id`; returns how many. */
+  private dropQueued(id: string): number {
+    const queue = this.pending;
+    let w = 0;
+    for (const item of queue) if (item.id !== id) queue[w++] = item;
+    const dropped = queue.length - w;
+    queue.length = w;
+    return dropped;
+  }
+
+  /**
+   * Delete `id` once any flush in flight has finished, so a write of the id
+   * that already left the queue lands first and is then deleted rather than
+   * resurrected. Later flushes run after the delete.
+   */
+  private deleteAfterFlush(id: string): Promise<number> {
+    const db = this.db;
+    const run: Promise<number> = this.flushChain.then(async () => {
+      const result = await db.delete([id]);
+      return result?.deleted ?? 0;
+    });
+    this.flushChain = run.then(() => undefined, () => undefined);
+    return run;
   }
 
   getStats(): VectorStats {
@@ -590,6 +637,8 @@ export class RvfBackend implements VectorBackendAsync {
     // Flush pending writes before searching so results are current
     if (this.pending.length > 0) {
       await this.flush();
+    } else {
+      await this.flushChain; // a background delete from remove()
     }
 
     const start = this.config.enableStats !== false ? performance.now() : 0;
@@ -631,12 +680,12 @@ export class RvfBackend implements VectorBackendAsync {
     this.ensureInitialized();
     if (!id || typeof id !== 'string') return false;
     validateId(id);
-    const result = await this.db.delete([id]);
-    if (result.deleted > 0) {
-      this.cachedCount = Math.max(0, this.cachedCount - result.deleted);
-      return true;
+    const queued = this.dropQueued(id) > 0;
+    const deleted = await this.deleteAfterFlush(id);
+    if (deleted > 0) {
+      this.cachedCount = Math.max(0, this.cachedCount - deleted);
     }
-    return false;
+    return deleted > 0 || queued;
   }
 
   async getStatsAsync(): Promise<VectorStats> {
@@ -693,7 +742,8 @@ export class RvfBackend implements VectorBackendAsync {
       }
       // close() replaces the queue; don't splice the new one.
       if (this.pending !== queue) break;
-      queue.splice(0, chunk.length);
+      // By identity: remove() may have dropped queued items meanwhile.
+      dropItems(queue, chunk);
       this.cachedCount += accepted;
     }
 
@@ -706,7 +756,8 @@ export class RvfBackend implements VectorBackendAsync {
   }
 
   /** ingestBatch with rvf type conflicts mapped to RvfMetadataTypeConflictError */
-  private async ingest(entries: IngestItem[]): Promise<number> {
+  private async ingest(items: IngestItem[]): Promise<number> {
+    const entries = lastWriteWins(items);
     try {
       const result = await this.db.ingestBatch(entries.map((e) => ({
         id: e.id,
