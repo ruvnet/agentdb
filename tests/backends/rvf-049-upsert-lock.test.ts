@@ -196,6 +196,39 @@ describe('RvfBackend sync write queue', () => {
     expect((await b.getStatsAsync()).count).toBe(1);
   });
 
+  it('remove() then insert() while a flush is in flight keeps the new copy', async () => {
+    const b = await memStore(8);
+    await b.insertAsync('x', axis(0));
+    b.insert('filler', axis(1));
+    const inFlight = b.flush();
+    b.remove('x');
+    b.insert('x', axis(4));
+    await inFlight;
+    const hits = await b.searchAsync(axis(4), 3);
+    expect(hits[0]?.id).toBe('x');
+    expect(hits[0].similarity).toBeCloseTo(1, 5);
+    expect(hits.filter((h) => h.id === 'x')).toHaveLength(1);
+  });
+
+  it('remove() then insertAsync() keeps the new copy', async () => {
+    const b = await memStore(8);
+    await b.insertAsync('x', axis(0));
+    b.remove('x');
+    await b.insertAsync('x', axis(4));
+    const hits = await b.searchAsync(axis(4), 3);
+    expect(hits[0]?.id).toBe('x');
+    expect(hits[0].similarity).toBeCloseTo(1, 5);
+  });
+
+  it('remove() then insertBatchAsync() keeps the new copy', async () => {
+    const b = await memStore(8);
+    await b.insertAsync('x', axis(0));
+    b.remove('x');
+    await b.insertBatchAsync([{ id: 'x', embedding: axis(4) }]);
+    const hits = await b.searchAsync(axis(4), 3);
+    expect(hits[0]?.id).toBe('x');
+  });
+
   it('removeAsync of a stored id deletes it before the next search', async () => {
     const b = await memStore(8);
     await b.insertAsync('x', axis(0));
