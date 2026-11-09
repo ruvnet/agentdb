@@ -100,6 +100,8 @@ export const RVF_METADATA_TYPE_CONFLICT = 0xff09;
 export const RVF_LOCK_HELD = 0x0300;
 
 type IngestItem = { id: string; vector: Float32Array; metadata?: Record<string, unknown> };
+/** A queued sync write; `seq` orders it against flushes and deletes. */
+type QueuedItem = IngestItem & { seq: number };
 
 /**
  * Thrown when rvf rejects a write because a metadata value's type differs
@@ -160,7 +162,7 @@ function lastWriteWins(entries: IngestItem[]): IngestItem[] {
 }
 
 /** Remove the items of `done` from `queue` in place, by identity. */
-function dropItems(queue: IngestItem[], done: IngestItem[]): void {
+function dropItems(queue: QueuedItem[], done: QueuedItem[]): void {
   const gone = new Set(done);
   let w = 0;
   for (const item of queue) if (!gone.has(item)) queue[w++] = item;
@@ -260,7 +262,9 @@ export class RvfBackend implements VectorBackendAsync {
   private ownedTempDir: string | null = null;
 
   // Sync insert queue: buffers sync insert() calls, flushed on threshold or explicit flush()
-  private pending: IngestItem[] = [];
+  private pending: QueuedItem[] = [];
+  /** Sequence number of the last queued write */
+  private writeSeq = 0;
   private rejected: RejectedWrite[] = [];
   private flushChain: Promise<void> = Promise.resolve();
   private batchThreshold: number;
@@ -395,6 +399,7 @@ export class RvfBackend implements VectorBackendAsync {
     }
 
     this.pending.push({
+      seq: ++this.writeSeq,
       id,
       vector: embedding instanceof Float32Array ? embedding : new Float32Array(embedding),
       metadata: validateMetadata(metadata),
@@ -455,10 +460,19 @@ export class RvfBackend implements VectorBackendAsync {
    */
   private deleteAfterFlush(id: string): Promise<number> {
     const db = this.db;
-    const run: Promise<number> = this.flushChain.then(async () => {
+    return this.serialized(async () => {
       const result = await db.delete([id]);
       return result?.deleted ?? 0;
     });
+  }
+
+  /**
+   * Run `op` after every flush, delete and async write started before it.
+   * All writes and deletes go through this chain, so they reach rvf in call
+   * order (a remove() then an insert of the same id keeps the new copy).
+   */
+  private serialized<T>(op: () => Promise<T>): Promise<T> {
+    const run = this.flushChain.then(op);
     this.flushChain = run.then(() => undefined, () => undefined);
     return run;
   }
@@ -576,11 +590,11 @@ export class RvfBackend implements VectorBackendAsync {
     }
     const start = this.config.enableStats !== false ? performance.now() : 0;
 
-    this.cachedCount += await this.ingest([{
+    this.cachedCount += await this.serialized(() => this.ingest([{
       id,
       vector: embedding instanceof Float32Array ? embedding : new Float32Array(embedding),
       metadata: validateMetadata(metadata),
-    }]);
+    }]));
 
     if (this.config.enableStats !== false) {
       this.stats.insertCount++;
@@ -615,7 +629,7 @@ export class RvfBackend implements VectorBackendAsync {
       };
     });
 
-    this.cachedCount += await this.ingest(entries);
+    this.cachedCount += await this.serialized(() => this.ingest(entries));
 
     if (this.config.enableStats !== false) {
       this.stats.insertCount += items.length;
@@ -703,10 +717,11 @@ export class RvfBackend implements VectorBackendAsync {
 
   async flush(): Promise<void> {
     // Serialize flushes: an auto-flush from insert() and an explicit flush()
-    // (or a search) must not ingest the same queued items twice.
-    const run = this.flushChain.then(() => this.flushPending());
-    this.flushChain = run.catch(() => undefined);
-    return run;
+    // (or a search) must not ingest the same queued items twice. A flush
+    // covers the writes queued before it was called; later ones wait for the
+    // next flush, which runs after any delete chained in between.
+    const upTo = this.writeSeq;
+    return this.serialized(() => this.flushPending(upTo));
   }
 
   /**
@@ -714,14 +729,18 @@ export class RvfBackend implements VectorBackendAsync {
    * queue only after its batch is accepted, so a failed ingest keeps it queued
    * for the next flush instead of dropping it (#46).
    */
-  private async flushPending(): Promise<void> {
+  private async flushPending(upTo: number): Promise<void> {
     if (this.pending.length === 0) return;
     this.ensureInitialized();
 
     const queue = this.pending;
     const conflicts: RejectedWrite[] = [];
-    while (queue.length > 0 && this.pending === queue) {
-      const chunk = queue.slice(0, MAX_BATCH_SIZE);
+    while (this.pending === queue) {
+      // The queue is in seq order; take the leading writes this flush covers.
+      let n = 0;
+      while (n < queue.length && n < MAX_BATCH_SIZE && queue[n].seq <= upTo) n++;
+      if (n === 0) break;
+      const chunk = queue.slice(0, n);
       let accepted: number;
       try {
         accepted = await this.ingest(chunk);
@@ -736,7 +755,8 @@ export class RvfBackend implements VectorBackendAsync {
             accepted += await this.ingest([item]);
           } catch (itemErr) {
             if (!(itemErr instanceof RvfMetadataTypeConflictError)) throw itemErr;
-            conflicts.push({ ...item, error: itemErr });
+            const { seq: _seq, ...data } = item;
+            conflicts.push({ ...data, error: itemErr });
           }
         }
       }

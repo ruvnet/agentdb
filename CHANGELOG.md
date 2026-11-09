@@ -5,6 +5,21 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.5] - 2026-11-09
+
+### Fixed
+
+- **RVF writes and deletes now reach rvf in call order.** In 3.7.4 the order could still break in three ways, each of which removed the new copy of an id:
+  - a `remove()` then `insert()` made while a flush was in flight: the running flush picked up the new write before the chained delete ran;
+  - a `remove()` followed by `insertAsync()`;
+  - a `remove()` followed by `insertBatchAsync()`.
+
+  A flush now covers only the writes queued before it was called. `insertAsync`, `insertBatchAsync`, deletes and flushes share one chain. The auto-flush at the batch threshold made the first case reachable from `updateEpisode`/`updateSkill`.
+
+### Corrected
+
+- The 3.7.4 entry said its 384-d recall@10 figures used an efSearch floor of 100. `RvfBackend` applies 444 at 384-d (`minEfSearch`), which is what was measured; the entry now says 444.
+
 ## [3.7.4] - 2026-11-09
 
 ### Fixed
@@ -17,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`@ruvector/rvf` ^0.4.9 and `@ruvector/rvf-node` ^0.4.4** (were ^0.4.7 / ^0.4.2). Measured through `RvfBackend`, 2,000 x 384 cosine:
   - re-ingesting a live id no longer drops the HNSW index: the query after an upsert takes 0.41 ms (median; 0.4.7: 1,686 ms, a full rebuild). Upsert itself: 5.0 ms (0.4.7: 41 ms).
   - a writer killed with SIGKILL no longer holds the lock: reopen takes 7-14 ms on the first attempt (0.4.7: 30,048 ms, 300 attempts).
-  - recall@10 vs exact at 5,000 x 384 (efSearch floor 100): 0.868 with no updates; 0.806 after 400 remove + insert updates and 0.792 after 400 in-place upserts.
+  - recall@10 vs exact at 5,000 x 384 (efSearch floor 444): 0.868 with no updates; 0.806 after 400 remove + insert updates and 0.792 after 400 in-place upserts.
 - The controllers keep calling `remove()` before re-inserting an id. On the same churn (3,000 x 384, 300 updates, 200 queries), in-place upserts reached recall@10 0.966 where remove + insert reached 0.9985 and 0.9965 on two of three seeds, so the workaround is kept until rvf closes that gap.
 - agentdb has no lock retry or sleep loop to remove: a live second writer still gets the `locked by another writer` error.
 
