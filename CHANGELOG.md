@@ -5,6 +5,27 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.4] - 2026-11-09
+
+### Fixed
+
+- **The same id written twice before a flush no longer wedges the RVF write queue.** rvf (0.4.7 and 0.4.9) rejects an `ingestBatch` that names an id twice (`InvalidManifest`, 0x0105). A sync `insert()` of an id that was already queued, which is what `updateEpisode`/`updateSkill` do right after a store, made every later `flush()` and `searchAsync()` fail until the store was closed, and the queued writes were then lost. A batch now keeps each id's last write; `insertBatchAsync` with a repeated id does the same.
+- **`remove()` is ordered with queued writes.** It drops queued writes of the id and deletes the stored copy after any flush in flight, and `searchAsync()` waits for that delete. Before, the delete was fire-and-forget: an `insert()` then `remove()` before a flush left the id in the store, and the controllers' update path (`remove()` then `insert()` of a stored id) could delete the new copy. `removeAsync()` returns `true` for an id that was only queued.
+
+### Changed
+
+- **`@ruvector/rvf` ^0.4.9 and `@ruvector/rvf-node` ^0.4.4** (were ^0.4.7 / ^0.4.2). Measured through `RvfBackend`, 2,000 x 384 cosine:
+  - re-ingesting a live id no longer drops the HNSW index: the query after an upsert takes 0.41 ms (median; 0.4.7: 1,686 ms, a full rebuild). Upsert itself: 5.0 ms (0.4.7: 41 ms).
+  - a writer killed with SIGKILL no longer holds the lock: reopen takes 7-14 ms on the first attempt (0.4.7: 30,048 ms, 300 attempts).
+  - recall@10 vs exact at 5,000 x 384 (efSearch floor 100): 0.868 with no updates; 0.806 after 400 remove + insert updates and 0.792 after 400 in-place upserts.
+- The controllers keep calling `remove()` before re-inserting an id. On the same churn (3,000 x 384, 300 updates, 200 queries), in-place upserts reached recall@10 0.966 where remove + insert reached 0.9985 and 0.9965 on two of three seeds, so the workaround is kept until rvf closes that gap.
+- agentdb has no lock retry or sleep loop to remove: a live second writer still gets the `locked by another writer` error.
+
+### Tests
+
+- `tests/backends/rvf-049-upsert-lock.test.ts` (real package, in the Library workflow): upsert keeps the index, a SIGKILLed writer's store reopens within 2 s, the queue cases above, and recall after churn for both update paths. On rvf 0.4.7 the first two fail (1,702 ms; no reopen within 5 s). On 0.4.9 without this release's `RvfBackend` changes the four queue tests fail.
+- `tests/regression/core-features.test.ts` runs again (it passed `dimensions` to `EmbeddingService`, which takes `dimension`, and did not await `addCausalEdge`).
+
 ## [3.7.2] - 2026-11-08
 
 ### Fixed
