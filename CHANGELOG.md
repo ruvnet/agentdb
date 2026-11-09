@@ -5,6 +5,12 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.7] - 2026-11-09
+
+### Fixed
+
+- **A failed native `better-sqlite3` load is no longer reported as success** (ruvnet/ruflo#3175, #58). After a Node ABI change (e.g. a reused npx cache), `getDatabaseImplementation()` used to swallow the load error and print a green "✅ Using sql.js" line. It now prints one yellow warning on stderr. For `NODE_MODULE_VERSION` / `ERR_DLOPEN_FAILED` the warning names both module versions and gives the fix (`npm rebuild better-sqlite3` or clear the npx cache). A missing `better-sqlite3` package still gets a neutral info line. `getDatabaseInfo()` adds `fallback`, `nativeStatus` and a read-only `nativeError: { code, message }`. sql.js is still used as the fallback.
+
 ## [3.7.6] - 2026-11-09
 
 ### Changed

@@ -1,6 +1,6 @@
 {
   "name": "agentdb",
-  "version": "3.7.6",
+  "version": "3.7.7",
   "description": "Agent memory and vector database for AI agents: single-file HNSW search, episodic memory, causal graph, reinforcement learning and MCP tools.",
   "type": "module",
   "main": "dist/src/index.js",
