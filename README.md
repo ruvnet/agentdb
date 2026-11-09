@@ -12,6 +12,10 @@
 
 # AgentDB
 
+<!-- weaver:seo:flow:start -->
+![agentdb: agent event → episodic memory → HNSW recall → MCP tools](https://raw.githubusercontent.com/ruvnet/agentdb/main/assets/agentdb-flow.svg)
+<!-- weaver:seo:flow:end -->
+
 **Vector memory that gets smarter every time your agent uses it.**
 
 </div>
@@ -347,3 +351,18 @@ docker compose -f docker/docker-compose.yml up
 ## License
 
 [MIT](LICENSE) OR Apache-2.0 — [RuvNet](https://github.com/ruvnet)
+
+<!-- weaver:seo:links:start -->
+## Works with / Used by
+
+Part of the [ruv.io](https://ruv.io) open-source stack for agent memory, vector database, AI agents.
+
+- **Works with** (its runtime dependencies): [`@ruvector/attention`](https://www.npmjs.com/package/@ruvector/attention), [`@ruvector/gnn`](https://www.npmjs.com/package/@ruvector/gnn), [`@ruvector/graph-node`](https://www.npmjs.com/package/@ruvector/graph-node), [`@ruvector/graph-transformer`](https://www.npmjs.com/package/@ruvector/graph-transformer), [`@ruvector/mincut-wasm`](https://www.npmjs.com/package/@ruvector/mincut-wasm), [`@ruvector/rabitq-wasm`](https://www.npmjs.com/package/@ruvector/rabitq-wasm), [`@ruvector/router`](https://www.npmjs.com/package/@ruvector/router), [`@ruvector/ruvllm`](https://www.npmjs.com/package/@ruvector/ruvllm), [`@ruvector/rvf`](https://www.npmjs.com/package/@ruvector/rvf), [`@ruvector/rvf-node`](https://www.npmjs.com/package/@ruvector/rvf-node), [`@ruvector/rvf-solver`](https://www.npmjs.com/package/@ruvector/rvf-solver), [`@ruvector/rvf-wasm`](https://www.npmjs.com/package/@ruvector/rvf-wasm), [`@ruvector/sona`](https://www.npmjs.com/package/@ruvector/sona), [`@ruvnet/sublinear-core`](https://www.npmjs.com/package/@ruvnet/sublinear-core), [`aidefence`](https://www.npmjs.com/package/aidefence), [`ruvector`](https://www.npmjs.com/package/ruvector), [`ruvector-attention-wasm`](https://www.npmjs.com/package/ruvector-attention-wasm), [`ruvector-graph-transformer-wasm`](https://www.npmjs.com/package/ruvector-graph-transformer-wasm)
+- **Used by** (published packages that depend on it): [`@agentic-robotics/mcp`](https://www.npmjs.com/package/@agentic-robotics/mcp), [`@agentic-robotics/self-learning`](https://www.npmjs.com/package/@agentic-robotics/self-learning), [`@claude-flow/aidefence`](https://www.npmjs.com/package/@claude-flow/aidefence), [`@claude-flow/cli`](https://www.npmjs.com/package/@claude-flow/cli), [`@claude-flow/memory`](https://www.npmjs.com/package/@claude-flow/memory), [`@claude-flow/neural`](https://www.npmjs.com/package/@claude-flow/neural), [`@foxruv/iris`](https://www.npmjs.com/package/@foxruv/iris), [`@foxruv/iris-ultrathink`](https://www.npmjs.com/package/@foxruv/iris-ultrathink), [`@foxruv/nova-medicina`](https://www.npmjs.com/package/@foxruv/nova-medicina), [`@neural-trader/agentic-accounting-agents`](https://www.npmjs.com/package/@neural-trader/agentic-accounting-agents), [`@neural-trader/agentic-accounting-core`](https://www.npmjs.com/package/@neural-trader/agentic-accounting-core), [`@neural-trader/example-dynamic-pricing`](https://www.npmjs.com/package/@neural-trader/example-dynamic-pricing)
+<!-- weaver:seo:links:end -->
+
+<!-- weaver:seo:footer:start -->
+---
+
+Built by [rUv](https://ruv.io) · [ruv.io](https://ruv.io) · [Source](https://github.com/ruvnet/agentdb)
+<!-- weaver:seo:footer:end -->
