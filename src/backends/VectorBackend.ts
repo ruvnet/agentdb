@@ -129,6 +129,14 @@ export interface VectorBackend {
   readonly name: 'ruvector' | 'hnswlib' | 'rvf';
 
   /**
+   * True when insert() of a stored id replaces it in place, with search
+   * quality no worse than remove() then insert(). Callers that update an id
+   * skip the remove() when this is set. Backends that reject or duplicate a
+   * re-inserted id leave it unset.
+   */
+  readonly upsertsInPlace?: boolean;
+
+  /**
    * Insert a single vector with optional metadata
    * @param id - Unique string identifier
    * @param embedding - Vector as Float32Array

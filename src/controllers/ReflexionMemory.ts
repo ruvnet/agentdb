@@ -1141,7 +1141,9 @@ export class ReflexionMemory {
 
     if (embedding && this.vectorBackend) {
       try {
-        this.vectorBackend.remove(String(episodeId));
+        // RVF (rvf >= 0.4.10) upserts in place with recall at least that of
+        // remove + insert; other backends reject or duplicate a re-inserted id.
+        if (!this.vectorBackend.upsertsInPlace) this.vectorBackend.remove(String(episodeId));
         this.vectorBackend.insert(String(episodeId), embedding);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

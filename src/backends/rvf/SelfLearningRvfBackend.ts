@@ -72,6 +72,7 @@ const FREQ_PRUNE_THRESHOLD = 0.001;
 
 export class SelfLearningRvfBackend implements VectorBackendAsync {
   readonly name = 'rvf' as const;
+  readonly upsertsInPlace = true;
   private backend: RvfBackend;
   private sona: SonaLearningBackend | null = null;
   private router: SemanticQueryRouter | null = null;

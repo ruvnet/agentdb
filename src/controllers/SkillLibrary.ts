@@ -1060,7 +1060,9 @@ export class SkillLibrary {
 
     if (embedding && this.vectorBackend) {
       try {
-        this.vectorBackend.remove(`skill:${id}`);
+        // RVF (rvf >= 0.4.10) upserts in place with recall at least that of
+        // remove + insert; other backends reject or duplicate a re-inserted id.
+        if (!this.vectorBackend.upsertsInPlace) this.vectorBackend.remove(`skill:${id}`);
         this.vectorBackend.insert(`skill:${id}`, embedding, {
           name: next.name, description: next.description ?? undefined,
           successRate: current.success_rate, avgReward: current.avg_reward,

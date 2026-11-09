@@ -37,7 +37,8 @@ async function freshBackend(): Promise<RvfBackend> {
 describe('RvfBackend flush retry', () => {
   beforeEach(() => {
     ingested.length = 0;
-    mockDb.status.mockResolvedValue({ totalVectors: 0 });
+    // Like rvf: the stored count is the number of distinct ids ingested.
+    mockDb.status.mockImplementation(async () => ({ totalVectors: new Set(ingested).size }));
     mockDb.close.mockResolvedValue(undefined);
     ingestBatch.mockReset();
     ingestBatch.mockImplementation(async (entries: Array<{ id: string }>) => {

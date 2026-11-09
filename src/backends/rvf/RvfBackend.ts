@@ -149,9 +149,12 @@ function isTypeConflict(err: unknown): boolean {
 }
 
 /**
- * rvf rejects a batch that names the same id twice (InvalidManifest 0x0105,
- * rvf 0.4.7 and 0.4.9), which would wedge the write queue. Keep each id's
- * last write, in order.
+ * Keep each id's last write, in order. rvf 0.4.7 and 0.4.9 rejected a batch
+ * that named the same id twice (InvalidManifest 0x0105), which wedged the
+ * write queue. rvf 0.4.10 applies such a batch last-write-wins itself, so on
+ * the supported floor this is a no-op for the result. It is kept because it
+ * costs one Map pass and keeps the queue from wedging if a consumer's
+ * overrides or lockfile resolve an rvf older than 0.4.10.
  */
 function lastWriteWins(entries: IngestItem[]): IngestItem[] {
   if (entries.length < 2) return entries;
@@ -248,6 +251,8 @@ interface PerfStats {
  */
 export class RvfBackend implements VectorBackendAsync {
   readonly name = 'rvf' as const;
+  /** rvf >= 0.4.10 re-links an upserted node (recall@10 after updates 1.0 vs 0.9955 for remove + insert). */
+  readonly upsertsInPlace = true;
 
   // RVF database handle (unknown since @ruvector/rvf types not available at compile-time)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -590,7 +595,7 @@ export class RvfBackend implements VectorBackendAsync {
     }
     const start = this.config.enableStats !== false ? performance.now() : 0;
 
-    this.cachedCount += await this.serialized(() => this.ingest([{
+    await this.serialized(() => this.ingest([{
       id,
       vector: embedding instanceof Float32Array ? embedding : new Float32Array(embedding),
       metadata: validateMetadata(metadata),
@@ -629,7 +634,7 @@ export class RvfBackend implements VectorBackendAsync {
       };
     });
 
-    this.cachedCount += await this.serialized(() => this.ingest(entries));
+    await this.serialized(() => this.ingest(entries));
 
     if (this.config.enableStats !== false) {
       this.stats.insertCount += items.length;
@@ -741,18 +746,16 @@ export class RvfBackend implements VectorBackendAsync {
       while (n < queue.length && n < MAX_BATCH_SIZE && queue[n].seq <= upTo) n++;
       if (n === 0) break;
       const chunk = queue.slice(0, n);
-      let accepted: number;
       try {
-        accepted = await this.ingest(chunk);
+        await this.ingest(chunk);
       } catch (err) {
         if (!(err instanceof RvfMetadataTypeConflictError)) throw err;
         // rvf rejects the whole batch; retry item by item so one bad entry
         // does not block the rest, and park the conflicting ones with their data.
-        accepted = 0;
         for (const item of chunk) {
           if (this.pending !== queue) break;
           try {
-            accepted += await this.ingest([item]);
+            await this.ingest([item]);
           } catch (itemErr) {
             if (!(itemErr instanceof RvfMetadataTypeConflictError)) throw itemErr;
             const { seq: _seq, ...data } = item;
@@ -764,7 +767,6 @@ export class RvfBackend implements VectorBackendAsync {
       if (this.pending !== queue) break;
       // By identity: remove() may have dropped queued items meanwhile.
       dropItems(queue, chunk);
-      this.cachedCount += accepted;
     }
 
     this.stats.flushCount++;
@@ -775,16 +777,20 @@ export class RvfBackend implements VectorBackendAsync {
     }
   }
 
-  /** ingestBatch with rvf type conflicts mapped to RvfMetadataTypeConflictError */
-  private async ingest(items: IngestItem[]): Promise<number> {
+  /**
+   * ingestBatch with rvf type conflicts mapped to RvfMetadataTypeConflictError.
+   * The count is read back from rvf: `accepted` counts an in-place upsert of a
+   * stored id as 1, so adding it up overcounted every update.
+   */
+  private async ingest(items: IngestItem[]): Promise<void> {
     const entries = lastWriteWins(items);
     try {
-      const result = await this.db.ingestBatch(entries.map((e) => ({
+      await this.db.ingestBatch(entries.map((e) => ({
         id: e.id,
         vector: e.vector,
         metadata: e.metadata,
       })));
-      return result?.accepted ?? entries.length;
+      this.cachedCount = (await this.db.status()).totalVectors ?? this.cachedCount;
     } catch (err) {
       if (isTypeConflict(err)) {
         throw new RvfMetadataTypeConflictError(entries.map((e) => e.id), err);
