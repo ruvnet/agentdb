@@ -27,6 +27,82 @@ type Database = any;
 let cachedImpl: any = null;
 let cachedImplKind: 'better-sqlite3' | 'sql.js' | null = null;
 
+/**
+ * Why native better-sqlite3 was or wasn't selected (ruflo #3175).
+ *   - 'loaded'         native driver probed OK and is in use
+ *   - 'not-installed'  the better-sqlite3 package itself is absent (expected)
+ *   - 'load-failed'    the package is present but could not load/open — e.g.
+ *                      a NODE_MODULE_VERSION / ABI mismatch after a Node
+ *                      upgrade, or a missing native binding. This is a broken
+ *                      install, so it is surfaced as a warning and recorded.
+ *   - 'disabled'       AGENTDB_FORCE_SQLJS was set
+ */
+export type NativeDriverStatus = 'loaded' | 'not-installed' | 'load-failed' | 'disabled';
+
+export interface NativeLoadError {
+  code: string;
+  message: string;
+}
+
+let nativeStatus: NativeDriverStatus | null = null;
+let nativeError: NativeLoadError | null = null;
+
+const ABI_MISMATCH_RE = /NODE_MODULE_VERSION/;
+const NOT_INSTALLED_RE = /Cannot find (?:package|module) ['"]better-sqlite3['"]/;
+
+/**
+ * True only when the better-sqlite3 package itself cannot be resolved. A
+ * missing *transitive* dependency (e.g. `bindings`) raises the same error
+ * code but means the install is broken, so it is classified as load-failed.
+ */
+function isNativeNotInstalled(error: unknown): boolean {
+  // Loaders/bundlers may wrap the resolution error; follow `cause` a few levels.
+  let current = error as { code?: unknown; message?: unknown; cause?: unknown } | null | undefined;
+  for (let depth = 0; current && depth < 4; depth++) {
+    const code = current.code;
+    if (
+      (code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND') &&
+      NOT_INSTALLED_RE.test(String(current.message ?? ''))
+    ) {
+      return true;
+    }
+    current = current.cause as typeof current;
+  }
+  return false;
+}
+
+function toNativeLoadError(error: unknown): NativeLoadError {
+  const err = error as { code?: unknown; message?: unknown } | null;
+  const message = String(err?.message ?? error);
+  const code = typeof err?.code === 'string' && err.code
+    ? err.code
+    : ABI_MISMATCH_RE.test(message) ? 'ERR_DLOPEN_FAILED' : 'NATIVE_LOAD_FAILED';
+  return { code, message };
+}
+
+function isAbiMismatch(error: NativeLoadError): boolean {
+  return error.code === 'ERR_DLOPEN_FAILED' || ABI_MISMATCH_RE.test(error.message);
+}
+
+/** One-line, actionable warning for a native driver that exists but won't load. */
+export function formatNativeFallbackWarning(error: NativeLoadError): string {
+  let cause: string;
+  if (isAbiMismatch(error)) {
+    const versions = error.message.match(/NODE_MODULE_VERSION (\d+)[\s\S]*?NODE_MODULE_VERSION (\d+)/);
+    cause = versions
+      ? `better-sqlite3 was built for a different Node.js ABI (NODE_MODULE_VERSION ${versions[1]}, this Node.js needs ${versions[2]})`
+      : 'better-sqlite3 was built for a different Node.js version (native ABI mismatch)';
+  } else {
+    const firstLine = error.message.split('\n')[0].trim();
+    cause = `better-sqlite3 failed to load (${error.code}: ${firstLine})`;
+  }
+  const text =
+    `⚠️  AgentDB: ${cause}; falling back to sql.js (WASM, slower). ` +
+    'Fix: run `npm rebuild better-sqlite3`, or clear the npx cache (`rm -rf ~/.npm/_npx`) if running via npx.';
+  const colour = process.stderr?.isTTY && !process.env.NO_COLOR;
+  return colour ? `\x1b[33m${text}\x1b[0m` : text;
+}
+
 export interface FileFingerprint {
   exists: boolean;
   device?: number;
@@ -222,30 +298,51 @@ export async function getDatabaseImplementation(): Promise<any> {
   if (cachedImpl) return cachedImpl;
 
   // 1. Try native better-sqlite3 (optional peer; same prepare/run API).
+  let fallbackStatus: NativeDriverStatus = 'disabled';
+  let fallbackError: NativeLoadError | null = null;
   if (!process.env.AGENTDB_FORCE_SQLJS) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic optional import
       const mod: any = await import('better-sqlite3');
       const BetterSqlite3 = mod.default ?? mod;
-      if (typeof BetterSqlite3 === 'function') {
-        // Importing the JS wrapper can succeed even when its native binding is
-        // missing or incompatible with the current Node ABI. Probe an actual
-        // in-memory connection before selecting it.
-        const probe = new BetterSqlite3(':memory:');
-        probe.close();
-        cachedImpl = BetterSqlite3;
-        cachedImplKind = 'better-sqlite3';
-        console.error('✅ Using native better-sqlite3');
-        return cachedImpl;
+      if (typeof BetterSqlite3 !== 'function') {
+        throw Object.assign(
+          new Error(`better-sqlite3 export is not a constructor (got ${typeof BetterSqlite3})`),
+          { code: 'NATIVE_INVALID_EXPORT' }
+        );
       }
-    } catch {
-      // Not installed or failed to load → fall through to sql.js.
+      // Importing the JS wrapper can succeed even when its native binding is
+      // missing or incompatible with the current Node ABI. Probe an actual
+      // in-memory connection before selecting it.
+      const probe = new BetterSqlite3(':memory:');
+      probe.close();
+      cachedImpl = BetterSqlite3;
+      cachedImplKind = 'better-sqlite3';
+      nativeStatus = 'loaded';
+      nativeError = null;
+      console.error('✅ Using native better-sqlite3');
+      return cachedImpl;
+    } catch (error) {
+      // Keep the cause instead of swallowing it (ruflo #3175): an absent
+      // optional package is expected, but a present-and-broken one is not.
+      if (isNativeNotInstalled(error)) {
+        fallbackStatus = 'not-installed';
+      } else {
+        fallbackStatus = 'load-failed';
+        fallbackError = toNativeLoadError(error);
+      }
     }
   }
 
   // 2. Fall back to sql.js (WASM, no build tools).
   try {
-    console.error('✅ Using sql.js (WASM SQLite, no build tools required)');
+    if (fallbackStatus === 'load-failed') {
+      console.warn(formatNativeFallbackWarning(fallbackError!));
+    } else if (fallbackStatus === 'not-installed') {
+      console.error('ℹ️  Using sql.js (WASM SQLite); optional native better-sqlite3 is not installed');
+    } else {
+      console.error('ℹ️  Using sql.js (WASM SQLite); AGENTDB_FORCE_SQLJS is set');
+    }
 
     // sql.js requires async initialization
     const mod = await import('sql.js');
@@ -253,6 +350,8 @@ export async function getDatabaseImplementation(): Promise<any> {
 
     cachedImpl = createSqlJsWrapper(SQL);
     cachedImplKind = 'sql.js';
+    nativeStatus = fallbackStatus;
+    nativeError = fallbackError;
     return cachedImpl;
   } catch (error) {
     console.error('❌ Failed to initialize sql.js:', (error as Error).message);
@@ -268,6 +367,8 @@ export async function getDatabaseImplementation(): Promise<any> {
 export function _resetDatabaseImplementationForTests(): void {
   cachedImpl = null;
   cachedImplKind = null;
+  nativeStatus = null;
+  nativeError = null;
 }
 
 /**
@@ -736,13 +837,22 @@ export function wrapExistingSqlJsDatabase(rawDb: any, filename: string = ':memor
 }
 
 /**
- * Get information about current database implementation
+ * Get information about current database implementation.
+ *
+ * `fallback` is true when sql.js is serving because native better-sqlite3 was
+ * attempted and unavailable (not installed, or failed to load). `nativeError`
+ * is set only when the native package was present but failed to load — the
+ * case users need to act on (ruflo #3175). Both are absent before
+ * getDatabaseImplementation() has run.
  */
 export function getDatabaseInfo(): {
   implementation: string;
   isNative: boolean;
   performance: 'high' | 'medium' | 'low';
   requiresBuildTools: boolean;
+  fallback: boolean;
+  nativeStatus?: NativeDriverStatus;
+  nativeError?: Readonly<NativeLoadError>;
 } {
   // Reports the currently-loaded backend; falls back to the sql.js description
   // before getDatabaseImplementation() has run.
@@ -752,12 +862,18 @@ export function getDatabaseInfo(): {
       isNative: true,
       performance: 'high',
       requiresBuildTools: true,
+      fallback: false,
+      nativeStatus: 'loaded',
     };
   }
+  const selected = cachedImplKind === 'sql.js';
   return {
     implementation: 'sql.js (WASM)',
     isNative: false,
     performance: 'medium',
     requiresBuildTools: false,
+    fallback: selected && (nativeStatus === 'not-installed' || nativeStatus === 'load-failed'),
+    ...(selected && nativeStatus ? { nativeStatus } : {}),
+    ...(selected && nativeError ? { nativeError: Object.freeze({ ...nativeError }) } : {}),
   };
 }
