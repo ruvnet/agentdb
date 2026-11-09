@@ -1,15 +1,18 @@
 /**
- * RvfBackend on the real @ruvector/rvf >= 0.4.9 / rvf-node >= 0.4.4.
+ * RvfBackend on the real @ruvector/rvf >= 0.4.10 / rvf-node >= 0.4.5.
  *
  * - Re-ingesting a live id keeps the HNSW index (rvf 0.4.7 dropped it, so the
  *   next query rebuilt the graph: 1.7 s at 2,000 x 384).
- * - The controllers still remove() before re-inserting an id: on the same
- *   churn, in-place upserts lose recall that remove + insert keeps (3,000 x 384,
- *   300 updates: 0.966 vs 0.9985 and 0.966 vs 0.9965 on two of three seeds).
+ * - In-place upsert re-links the node (rvf 0.4.10), so the controllers no
+ *   longer remove() before re-inserting an id on RVF. On the same churn
+ *   (3,000 x 384, 300 updates) in-place reaches recall@10 1.0 where
+ *   remove + insert reaches 0.9955 (0.4.9: in-place 0.9675).
+ * - An upsert does not count as a new vector in getStats().
  * - A writer that was SIGKILLed no longer holds the lock (0.4.7 kept it 30 s).
- * - The sync write queue: the same id queued twice must not wedge it (rvf
- *   rejects a batch with a repeated id), and remove() must not let a queued
- *   write resurrect the id.
+ * - rvf 0.4.10 applies a batch that names an id twice last-write-wins (0.4.9
+ *   rejected it with InvalidManifest). RvfBackend still collapses repeats
+ *   itself, so the sync write queue never wedges on an older rvf.
+ * - remove() must not let a queued write resurrect the id.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn } from 'child_process';
@@ -55,7 +58,7 @@ let tmpDir: string;
 beforeAll(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentdb-rvf049-')); });
 afterAll(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
 
-describe('rvf 0.4.9: upsert of a live id keeps the index', () => {
+describe('rvf 0.4.10: upsert of a live id', () => {
   it('the query after an upsert does not rebuild the graph', async () => {
     const vs = new Map<string, Float32Array>();
     for (let i = 0; i < 2000; i++) vs.set(`v${i}`, unit());
@@ -76,7 +79,7 @@ describe('rvf 0.4.9: upsert of a live id keeps the index', () => {
     expect(ms).toBeLessThan(250);
   }, 60_000);
 
-  it('recall@10 after churn: remove + insert (what the controllers do) is not worse than in-place upsert', async () => {
+  it('recall@10 after churn: in-place upsert (what the controllers do on RVF) is not worse than remove + insert', async () => {
     const N = 3000, CHURN = 300, Q = 200;
     const base = new Map<string, Float32Array>();
     for (let i = 0; i < N; i++) base.set(`v${i}`, unit());
@@ -112,13 +115,48 @@ describe('rvf 0.4.9: upsert of a live id keeps the index', () => {
     const rReinsert = await recall(reinsert);
     expect((await upsert.getStatsAsync()).count).toBe(N);
     expect((await reinsert.getStatsAsync()).count).toBe(N);
-    expect(rReinsert).toBeGreaterThanOrEqual(rUpsert - 0.02);
-    expect(rReinsert).toBeGreaterThanOrEqual(0.95);
-    console.log(`[rvf-049] recall@10 after ${CHURN} updates: upsert ${rUpsert}, remove+insert ${rReinsert}`);
+    // rvf 0.4.9: upsert 0.9675, remove + insert 0.9955. 0.4.10: 1.0 and 0.9955.
+    expect(rUpsert).toBeGreaterThanOrEqual(rReinsert);
+    expect(rUpsert).toBeGreaterThanOrEqual(0.99);
+    console.log(`[rvf-0410] recall@10 after ${CHURN} updates: upsert ${rUpsert}, remove+insert ${rReinsert}`);
   }, 120_000);
+
+  it('an upsert does not count as a new vector', async () => {
+    // rvf reports an upsert of a stored id as accepted: 1. Summing that made
+    // the sync getStats() grow by one per update (5 for 2 vectors here).
+    const b = await memStore(8);
+    await b.insertAsync('x', axis(0));
+    await b.insertAsync('y', axis(1));
+    b.insert('x', axis(4));
+    await b.flush();
+    await b.insertAsync('y', axis(5));
+    await b.insertBatchAsync([{ id: 'x', embedding: axis(6) }]);
+    expect(b.getStats().count).toBe(2);
+    expect((await b.getStatsAsync()).count).toBe(2);
+  });
 });
 
-describe('rvf 0.4.9: a SIGKILLed writer does not hold the lock', () => {
+describe('rvf 0.4.10: a batch that names an id twice', () => {
+  it('is applied last-write-wins by rvf itself and does not poison the store', async () => {
+    const { RvfDatabase } = await import('@ruvector/rvf');
+    const file = path.join(tmpDir, 'dup-batch.rvf');
+    const db = await RvfDatabase.create(file, { dimensions: 8, metric: 'cosine' });
+    try {
+      // rvf 0.4.9: rejected with InvalidManifest (0x0105) and nothing stored.
+      await db.ingestBatch([{ id: 'x', vector: axis(1) }, { id: 'y', vector: axis(2) }, { id: 'x', vector: axis(5) }]);
+      expect((await db.status()).totalVectors).toBe(2);
+      const hits = await db.query(axis(5), 2);
+      expect(hits[0].id).toBe('x');
+      expect(hits[0].distance).toBeCloseTo(0, 5);
+      await db.ingestBatch([{ id: 'z', vector: axis(3) }]);
+      expect((await db.query(axis(3), 1))[0].id).toBe('z');
+    } finally {
+      await db.close();
+    }
+  });
+});
+
+describe('rvf 0.4.10: a SIGKILLed writer does not hold the lock', () => {
   it('reopens within 2 s of the writer being killed', async () => {
     const file = path.join(tmpDir, 'killed.rvf');
     const seedStore = new RvfBackend({ dimension: 8, metric: 'cosine', storagePath: file });

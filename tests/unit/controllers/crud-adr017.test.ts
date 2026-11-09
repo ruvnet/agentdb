@@ -178,6 +178,23 @@ describe('ReflexionMemory CRUD', () => {
     expect(vb.store.has(String(id))).toBe(false);
   });
 
+  it('updates in place, without a remove(), on a backend that upserts in place', async () => {
+    const vb = Object.assign(fakeVectorBackend(), { upsertsInPlace: true });
+    const r = new ReflexionMemory(db, embedder, vb);
+    const id = await r.storeEpisode({ sessionId: 's', task: 'vector one', reward: 1, success: true });
+    const first = vb.store.get(String(id));
+    await r.updateEpisode(id, { task: 'vector two' });
+    expect(vb.removed).toEqual([]);
+    expect(vb.store.get(String(id))).not.toEqual(first);
+
+    const lib = new SkillLibrary(db, embedder, vb);
+    const s = await lib.createSkill({ name: 'inplace', description: 'one', successRate: 0 });
+    const before = vb.store.get(`skill:${s}`);
+    await lib.updateSkill(s, { description: 'two, re-embedded' });
+    expect(vb.removed).toEqual([]);
+    expect(vb.store.get(`skill:${s}`)).not.toEqual(before);
+  });
+
   it('delete leaves no orphaned embedding and never coerces a malformed id', async () => {
     const ids: number[] = [];
     for (let i = 0; i < 13; i++) ids.push(await store(`ep ${i}`));

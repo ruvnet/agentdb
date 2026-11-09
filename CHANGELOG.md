@@ -5,6 +5,36 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.6] - 2026-11-09
+
+### Changed
+
+- **`@ruvector/rvf` ^0.4.10 and `@ruvector/rvf-node` ^0.4.5** (were ^0.4.9 / ^0.4.4). rvf 0.4.10 re-links a node upserted in place and applies a batch that names an id twice last-write-wins.
+- **`updateEpisode`/`updateSkill` no longer `remove()` before re-inserting on RVF.** 3.7.4 kept the remove because in-place upserts lost recall. Same churn as 3.7.4 through `RvfBackend` (3,000 x 384 cosine, 300 updates, 200 queries, recall@10 vs exact), in-place vs remove + insert:
+
+  | data (seed) | rvf 0.4.9 | rvf 0.4.10 |
+  |---|---|---|
+  | lcg 12345 | 0.9675 vs 0.9955 | **1.0** vs 0.9955 |
+  | lcg 777 | 0.966 vs 0.9965 | **1.0** vs 0.9965 |
+  | mulberry32 1 | 1.0 vs 1.0 | 1.0 vs 1.0 |
+  | mulberry32 2 | 0.999 vs 0.9995 | **1.0** vs 0.9995 |
+  | mulberry32 3 | 1.0 vs 0.9995 | 1.0 vs 0.9995 |
+
+  In-place is at least remove + insert on every seed on 0.4.10. (lcg 4242 is a degenerate data set, about 0.39 on both paths and both versions, 0.3975 vs 0.3885 on 0.4.10.) Update latency, median per update: 3.6-3.9 ms before (remove + insert, 3.7.5 on 0.4.9), 2.9-3.4 ms now (in-place on 0.4.10); p95 4.4-4.7 ms before, 3.5-4.2 ms now. An in-place upsert costs about 3.1 ms on 0.4.10 against 2.2 ms on 0.4.9; that is the re-linking.
+- The skip is gated on a new optional `VectorBackend.upsertsInPlace` flag, set by `RvfBackend` and `SelfLearningRvfBackend`. `HNSWLibBackend` rejects a re-inserted id and the other backends keep remove + insert.
+- `RvfBackend` still collapses a repeated id in a batch to its last write. rvf 0.4.10 does the same on its own (tested), so on the supported floor this changes nothing; it costs one Map pass and keeps the write queue from wedging if an override or lockfile resolves an older rvf.
+- The call-order guarantees from 3.7.4/3.7.5 (one chain for writes, deletes and flushes; `remove()` drops queued writes) are unchanged.
+
+### Fixed
+
+- **`getStats().count` no longer grows on updates.** rvf reports an in-place upsert of a stored id as `accepted: 1`, and `RvfBackend` added that up, so the sync count rose by one per update until the next `getStatsAsync()` (5 for a store holding 2). The count is now read back from rvf after each ingest (`status()`, about 3 us).
+
+### Tests
+
+- `tests/backends/rvf-049-upsert-lock.test.ts`: the recall test now asserts in-place >= remove + insert and >= 0.99 (fails on 0.4.9: 0.966 vs 0.9985); a raw rvf batch with a repeated id stores the last write and later batches still work (fails on 0.4.9: InvalidManifest); an upsert does not change `getStats().count`.
+- `tests/unit/controllers/crud-adr017.test.ts`: on a backend with `upsertsInPlace`, `updateEpisode` and `updateSkill` replace the vector without calling `remove()`.
+- The meta-snapshot cost per commit in rvf (O(n)) is not fixed in 0.4.10; nothing here depends on it.
+
 ## [3.7.5] - 2026-11-09
 
 ### Fixed
