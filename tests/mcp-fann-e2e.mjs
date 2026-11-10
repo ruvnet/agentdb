@@ -71,6 +71,10 @@ for (const driver of ['sqljs', 'native']) {
     const names = (await s.request('tools/list', {})).result.tools.map(t => t.name);
     assert.ok(names.includes('agentdb_neural_train'));
     assert.ok(!names.includes('agentdb_neural_delete'));
+    for (const invalid of [{ ...model, extra: true }, { ...model, layers: [{ ...model.layers[0], extra: true }] }]) {
+      assert.ok((await s.call('agentdb_neural_create', { id: 'invalid', model: invalid })).isError);
+    }
+    assert.deepEqual(await ok('agentdb_neural_list', {}), []);
     await ok('agentdb_neural_create', { id: 'linear', model });
     const before = await ok('agentdb_neural_predict', { id: 'linear', inputs: [1, 2], rows: 2 });
     assert.deepEqual(before.outputs, [0, 0]);
