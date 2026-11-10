@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   crud-and-mcp:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -66,7 +66,7 @@ jobs:
   build-without-optional-deps:
     # Optional dependencies may fail to install on a consumer's platform; the
     # TypeScript build must not depend on their type declarations.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
