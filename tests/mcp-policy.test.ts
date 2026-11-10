@@ -51,3 +51,15 @@ describe('AgentDB MCP capability policy', () => {
   });
 });
 
+
+
+describe('Neural model MCP policy', () => {
+  for (const profile of ['readonly', 'retrieval', 'learning', 'admin']) {
+    it(`gates persisted neural operations for ${profile}`, () => {
+      const policy = buildMcpToolPolicy({ AGENTDB_MCP_PROFILE: profile });
+      for (const action of ['get', 'list', 'predict']) expect(isMcpToolAllowed(`agentdb_neural_${action}`, policy)).toBe(true);
+      for (const action of ['create', 'train']) expect(isMcpToolAllowed(`agentdb_neural_${action}`, policy)).toBe(profile === 'learning' || profile === 'admin');
+      expect(isMcpToolAllowed('agentdb_neural_delete', policy)).toBe(profile === 'admin');
+    });
+  }
+});

@@ -1,0 +1,75 @@
+name: protected-release
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact reviewed main commit
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: agentdb-neural-release
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Require exact main and zero release blockers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          test "$(gh api repos/$GITHUB_REPOSITORY/commits/main --jq .sha)" = "$EXPECTED_SHA"
+          test "$(gh issue list --label release-blocker --state open --json number --jq length)" = 0
+      - run: npm ci --no-audit --no-fund
+      - run: npm audit --omit=optional --audit-level=high
+      - run: npm run build
+      - name: Library regression tests
+        run: node scripts/fann-release-qualify.mjs
+      - run: npm run test:mcp-stdio && npm run test:mcp-crud && npm run test:mcp-fann
+      - name: Pack once and qualify exact consumer bytes
+        run: node scripts/fann-release-pack.mjs "$RUNNER_TEMP/candidate"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentdb-neural-candidate-${{ github.sha }}
+          path: ${{ runner.temp }}/candidate/
+          if-no-files-found: error
+  publish:
+    needs: qualify
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: npm-release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          name: agentdb-neural-candidate-${{ github.sha }}
+          path: ${{ runner.temp }}/candidate
+      - name: Revalidate exact candidate and publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: node scripts/fann-release-publish.mjs "$RUNNER_TEMP/candidate"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agentdb-neural-publication-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate/
+          if-no-files-found: error

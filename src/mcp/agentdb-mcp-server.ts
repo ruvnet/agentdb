@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { FannModels } from '../controllers/FannModels.js';
+import { FANN_TOOLS, isFannTool, dispatchFannTool } from './fann-tools.js';
 /**
  * AgentDB MCP Server
  * Production-ready MCP server for Claude Desktop integration
@@ -307,6 +309,7 @@ const reflexion = new ReflexionMemory(db, embeddingService);
 const skills = new SkillLibrary(db, embeddingService);
 const causalRecall = new CausalRecall(db, embeddingService);
 const learner = new NightlyLearner(db, embeddingService);
+let fannModels = new FannModels(db);
 const learningSystem = new LearningSystem(db, embeddingService);
 const batchOps = new BatchOperations(db, embeddingService);
 const reasoningBank = new ReasoningBank(db, embeddingService);
@@ -343,6 +346,12 @@ async function describeCapabilities(): Promise<Record<string, unknown>> {
         : DEFAULT_EXACT_SEARCH_THRESHOLD,
       patternRerankWeights: DEFAULT_RERANK_WEIGHTS,
     },
+    neuralModels: {
+      runtime: 'ruv-fann', initialization: 'lazy', persistence: 'sqlite-checkpoints',
+      optimizers: ['sgd', 'adamw'], maxRows: 128, maxEpochs: 1000,
+      maxTrainingCompute: 50_000_000, preparedCacheEntries: 16,
+      tools: FANN_TOOLS.map(tool => tool.name).filter(name => isMcpToolAllowed(name, toolPolicy)),
+    },
     mcpProfile: toolPolicy.profile,
   };
 }
@@ -353,7 +362,7 @@ async function describeCapabilities(): Promise<Record<string, unknown>> {
 const server = new Server(
   {
     name: 'agentdb',
-    version: '1.3.0',
+    version: '3.8.0',
   },
   {
     capabilities: {
@@ -366,6 +375,7 @@ const server = new Server(
 // Tool Definitions
 // ============================================================================
 const tools = [
+  ...FANN_TOOLS,
   // ==========================================================================
   // CORE VECTOR DB OPERATIONS (NEW)
   // ==========================================================================
@@ -1338,6 +1348,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (!isMcpToolAllowed(name, toolPolicy)) {
       throw new Error(`MCP tool "${name}" is not permitted by the active AgentDB capability policy`);
     }
+    if (isFannTool(name)) {
+      const result = await dispatchFannTool(fannModels, name, args);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
     switch (name) {
       // ======================================================================
       // CORE VECTOR DB OPERATIONS
@@ -1345,7 +1359,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'agentdb_init': {
         // Only ever the open database: a caller-supplied path is never touched
         if (args?.reset === true) {
+          fannModels.dispose();
           resetDatabaseTables(db);
+          fannModels = new FannModels(db);
         }
 
         // Initialize schema
@@ -2913,6 +2929,7 @@ async function main() {
     clearInterval(keepAlive);
     clearInterval(autoSaveInterval);
 
+    fannModels.dispose();
     let persistenceFailed = false;
 
     // Save database before exit

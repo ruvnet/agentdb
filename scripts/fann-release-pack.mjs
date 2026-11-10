@@ -1,0 +1,30 @@
+import { execFileSync } from 'node:child_process';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { resolve, join } from 'node:path';
+import { tmpdir } from 'node:os';
+const out = resolve(process.argv[2]); mkdirSync(out, { recursive: true });
+const run = (cmd, args, cwd = process.cwd()) => execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }).trim();
+const sha256 = path => createHash('sha256').update(readFileSync(path)).digest('hex');
+if (run('git', ['status', '--porcelain'])) throw new Error('Source must be clean');
+const sourceSha = run('git', ['rev-parse', 'HEAD']);
+const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+if (pkg.name !== 'agentdb' || pkg.version !== '3.8.0' || pkg.dependencies['ruv-fann'] !== '0.1.0') throw new Error('Unexpected release identity');
+const tests = JSON.parse(readFileSync('/tmp/fann-release-tests.json', 'utf8'));
+if (!tests.success || tests.numPassedTests < 1 || tests.numPassedTests !== tests.numTotalTests || tests.numPendingTests || tests.numTodoTests) throw new Error('Nonzero no-skip test evidence required');
+const packed = JSON.parse(run('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', out]));
+if (packed.length !== 1) throw new Error('Expected one archive');
+const filename = packed[0].filename;
+const tarball = join(out, filename);
+const digest = sha256(tarball);
+const consumer = mkdtempSync(join(tmpdir(), 'agentdb-sealed-'));
+try {
+  writeFileSync(join(consumer, 'package.json'), '{"private":true,"type":"module"}');
+  run('npm', ['install', '--omit=optional', '--ignore-scripts', '--no-audit', '--no-fund', tarball], consumer);
+  run(process.execPath, [resolve('scripts/fann-packed-consumer.mjs')], consumer);
+} finally { rmSync(consumer, { recursive: true, force: true }); }
+if (sha256(tarball) !== digest) throw new Error('Consumer archive changed');
+const seal = { schema: 'agentdb.neural-release/1', sourceSha, name: pkg.name, version: pkg.version, releaseTag: 'v3.8.0', filename, sha256: digest, qualification: { packedConsumer: 'passed', node: process.version, testsPassed: tests.numPassedTests, testReportSha256: sha256('/tmp/fann-release-tests.json') } };
+writeFileSync(join(out, 'candidate-seal.json'), JSON.stringify(seal, null, 2) + '\n', { flag: 'wx' });
+writeFileSync(join(out, 'library-tests.json'), readFileSync('/tmp/fann-release-tests.json'), { flag: 'wx' });
+console.log(JSON.stringify(seal));

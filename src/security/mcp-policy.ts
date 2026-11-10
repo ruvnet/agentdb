@@ -1,6 +1,9 @@
 export type AgentDbMcpProfile = 'readonly' | 'retrieval' | 'learning' | 'admin';
 
 const READONLY_TOOLS = [
+  'agentdb_neural_get',
+  'agentdb_neural_list',
+  'agentdb_neural_predict',
   'agentdb_capabilities',
   'agentdb_search',
   'agentdb_pattern_search',
@@ -26,6 +29,8 @@ const READONLY_TOOLS = [
 
 const LEARNING_TOOLS = [
   ...READONLY_TOOLS,
+  'agentdb_neural_create',
+  'agentdb_neural_train',
   'experience_record',
   'learning_end_session',
   'learning_feedback',
@@ -56,6 +61,7 @@ const LEARNING_TOOLS = [
 
 /** Tools that reset or delete data: only the admin profile (or an explicit allow) grants them. */
 export const ADMIN_ONLY_TOOLS: readonly string[] = [
+  'agentdb_neural_delete',
   'agentdb_init',
   'agentdb_delete',
   'agentdb_delete_batch',

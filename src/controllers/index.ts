@@ -99,3 +99,5 @@ export type {
   ControllerRequirement,
   ControllerSafety
 } from './prerequisites.js';
+
+export * from './FannModels.js';

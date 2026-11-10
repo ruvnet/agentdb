@@ -366,3 +366,19 @@ Part of the [ruv.io](https://ruv.io) open-source stack for agent memory, vector 
 
 Built by [rUv](https://ruv.io) · [ruv.io](https://ruv.io) · [Source](https://github.com/ruvnet/agentdb)
 <!-- weaver:seo:footer:end -->
+
+
+### Persisted neural models (3.8)
+
+`FannModels` from `agentdb/controllers/FannModels` stores dense ruv-FANN
+checkpoints and revisions in your database. It provides real WASM batch inference,
+SGD/AdamW training, and bounded prepared-model caching. AgentDB depends on
+`ruv-fann@0.1.0`, which depends on `ruv-fann-wasm@0.1.0`; no optional native
+accelerator is needed for this API.
+
+Six MCP tools (`agentdb_neural_create`, `get`, `list`, `predict`, `train`, and
+`delete`, each with the `agentdb_neural_` prefix) follow the existing capability
+policy. Readonly clients can inspect and predict; learning clients can create
+and train; deletion requires admin or an explicit allow. See
+[the neural-model guide](https://github.com/ruvnet/agentdb/blob/main/docs/neural/ruv-fann.md)
+for usage, persistence semantics and bounded training limits.
