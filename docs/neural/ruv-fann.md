@@ -27,7 +27,8 @@ db.close();
 
 Checkpoints persist weights, biases, dimensions and revisions. Optimizer moments
 are not persisted; each training call starts a fresh optimizer. Training uses MSE
-and commits only a complete finite checkpoint. A concurrent update rejects the
+and supports Linear, Sigmoid, SigmoidSymmetric, Tanh and ReLU activations. It
+commits only a complete finite checkpoint. A concurrent update rejects the
 stale training commit. Model IDs cannot overwrite an existing checkpoint.
 
 Inference reuses prepared WASM models and batch workspaces in a bounded LRU.

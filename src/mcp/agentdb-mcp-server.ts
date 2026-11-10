@@ -348,6 +348,7 @@ async function describeCapabilities(): Promise<Record<string, unknown>> {
     },
     neuralModels: {
       runtime: 'ruv-fann', initialization: 'lazy', persistence: 'sqlite-checkpoints',
+      trainingActivations: ['Linear', 'Sigmoid', 'SigmoidSymmetric', 'Tanh', 'ReLU'],
       optimizers: ['sgd', 'adamw'], maxRows: 128, maxEpochs: 1000,
       maxTrainingCompute: 50_000_000, preparedCacheEntries: 16,
       tools: FANN_TOOLS.map(tool => tool.name).filter(name => isMcpToolAllowed(name, toolPolicy)),

@@ -33,7 +33,7 @@ export const FANN_TOOLS = [
   define('predict', 'Run batched inference using a cached prepared WASM model. Inputs are flat row-major numbers.', {
     id, inputs: numbers, rows: integer(128),
   }, ['id', 'inputs']),
-  define('train', 'Train a persisted neural model with bounded MSE optimization; commit a new revision only on success.', {
+  define('train', 'Train with bounded MSE optimization using Linear, Sigmoid, SigmoidSymmetric, Tanh or ReLU activations; commit a revision only on success.', {
     id, inputs: numbers, targets: numbers, rows: integer(128), epochs: integer(1000),
     learningRate: { type: 'number', exclusiveMinimum: 0, maximum: 1 }, optimizer: { type: 'string', enum: ['sgd', 'adamw'] },
   }, ['id', 'inputs', 'targets', 'rows', 'epochs', 'learningRate']),
