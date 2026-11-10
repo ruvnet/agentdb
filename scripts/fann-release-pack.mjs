@@ -21,7 +21,7 @@ const consumer = mkdtempSync(join(tmpdir(), 'agentdb-sealed-'));
 try {
   writeFileSync(join(consumer, 'package.json'), '{"private":true,"type":"module"}');
   run('npm', ['install', '--omit=optional', '--ignore-scripts', '--no-audit', '--no-fund', tarball], consumer);
-  run(process.execPath, [resolve('scripts/fann-packed-consumer.mjs')], consumer);
+  console.log(run(process.execPath, [resolve('scripts/fann-packed-consumer.mjs')], consumer));
 } finally { rmSync(consumer, { recursive: true, force: true }); }
 if (sha256(tarball) !== digest) throw new Error('Consumer archive changed');
 const seal = { schema: 'agentdb.neural-release/1', sourceSha, name: pkg.name, version: pkg.version, releaseTag: 'v3.8.0', filename, sha256: digest, qualification: { packedConsumer: 'passed', node: process.version, testsPassed: tests.numPassedTests, testReportSha256: sha256('/tmp/fann-release-tests.json') } };

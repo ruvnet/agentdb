@@ -46,7 +46,7 @@ async function qualify(spec) {
     const lock = JSON.parse(readFileSync(join(temp, 'package-lock.json'), 'utf8'));
     const expectedIntegrity = 'sha512-' + createHash('sha512').update(readFileSync(tarball)).digest('base64');
     if (lock.packages?.['node_modules/agentdb']?.integrity !== expectedIntegrity) throw new Error('Installed public package differs from sealed bytes');
-    run(process.execPath, [resolve('scripts/fann-packed-consumer.mjs')], temp, env);
+    console.log(run(process.execPath, [resolve('scripts/fann-packed-consumer.mjs')], temp, env));
   } finally { rmSync(temp, { recursive: true, force: true }); }
 }
 // Requalify the same packed bytes on Node24 before any irreversible operation.
