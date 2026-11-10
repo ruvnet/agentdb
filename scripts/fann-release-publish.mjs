@@ -41,7 +41,7 @@ async function qualify(spec) {
   try {
     writeFileSync(join(temp, 'package.json'), '{"private":true,"type":"module"}');
     writeFileSync(join(temp, '.npmrc'), 'registry=https://registry.npmjs.org\n');
-    const env = { ...consumerEnv, NPM_CONFIG_USERCONFIG: join(temp, '.npmrc') };
+    const env = { ...consumerEnv, NPM_CONFIG_USERCONFIG: join(temp, '.npmrc'), NPM_CONFIG_CACHE: join(temp, 'npm-cache') };
     run('npm', ['install', '--omit=optional', '--ignore-scripts', '--no-audit', '--no-fund', spec], temp, env);
     const lock = JSON.parse(readFileSync(join(temp, 'package-lock.json'), 'utf8'));
     const expectedIntegrity = 'sha512-' + createHash('sha512').update(readFileSync(tarball)).digest('base64');

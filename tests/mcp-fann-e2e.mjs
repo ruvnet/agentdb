@@ -1,6 +1,4 @@
-// ADR-017 end-to-end: drive every CRUD tool through the real MCP server over stdio.
-// Runs once on sql.js (BEGIN/COMMIT path) and once on better-sqlite3 (driver transaction path),
-// and checks that the default `learning` profile refuses the destructive tools.
+// Real neural MCP round trips, including persistence, policies and actual SQL driver checks.
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,7 +6,7 @@ import { join } from 'node:path';
 import assert from 'node:assert/strict';
 
 function startServer(env, dir) {
-  const child = spawn(process.execPath, ['dist/src/cli/agentdb-cli.js', 'mcp', 'start'], {
+  const child = spawn(process.execPath, [process.env.AGENTDB_TEST_CLI ?? 'dist/src/cli/agentdb-cli.js', 'mcp', 'start'], {
     cwd: process.cwd(),
     env: { ...process.env, AGENTDB_PATH: join(dir, 'agentdb.db'), AGENTDB_DISABLE_TRANSFORMERS: '1', ...env },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -61,13 +59,17 @@ async function init(server) {
 const model = { schema: 'ruv-fann.dense-layers/1', layers: [
   { inputs: 1, outputs: 1, weights: [0], bias: [0], activation: 'Linear', steepness: 1 },
 ] };
-for (const driver of ['sqljs', 'native']) {
+const drivers = (process.env.AGENTDB_TEST_DRIVERS ?? 'sqljs,native').split(',');
+assert.ok(drivers.length > 0 && drivers.every(driver => ['sqljs', 'native'].includes(driver)));
+for (const driver of drivers) {
   const dir = mkdtempSync(join(tmpdir(), 'agentdb-fann-e2e-'));
-  const env = { AGENTDB_FORCE_SQLJS: driver === 'sqljs' ? '1' : '0' };
+  const env = { AGENTDB_FORCE_SQLJS: driver === 'sqljs' ? '1' : '' };
   let s;
   const ok = async (name, args) => { const r = await s.call(name, args); assert.equal(r.isError, false, r.text); return r.json(); };
   try {
     s = startServer({ ...env, AGENTDB_MCP_PROFILE: 'learning' }, dir); await init(s);
+    const capabilities = await ok('agentdb_capabilities', {});
+    assert.equal(capabilities.sqlDriver.isNative, driver === 'native', `Expected actual ${driver} SQL backend`);
     const names = (await s.request('tools/list', {})).result.tools.map(t => t.name);
     assert.ok(names.includes('agentdb_neural_train'));
     assert.ok(!names.includes('agentdb_neural_delete'));

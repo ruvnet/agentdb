@@ -1,7 +1,8 @@
 /** Run in an empty consumer directory after installing the sealed agentdb tarball. */
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
+import { execFileSync } from 'node:child_process';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -33,3 +34,11 @@ try {
   assert.equal(models.delete('linear'), true);
   console.log(JSON.stringify({ status: 'pass', package: `agentdb@${pkg.version}`, tests: 8, backend: result.backend, initialLoss: result.initialLoss, finalLoss: result.finalLoss }));
 } finally { models?.dispose(); db?.close(); rmSync(dir, { recursive: true, force: true }); }
+
+const cli = require.resolve('agentdb/cli');
+assert.equal(execFileSync(process.execPath, [cli, '--version'], { encoding: 'utf8' }).trim(), 'agentdb v3.8.0');
+execFileSync(process.execPath, [fileURLToPath(new URL('../tests/mcp-fann-e2e.mjs', import.meta.url))], {
+  cwd: process.cwd(), stdio: 'inherit', timeout: 120000,
+  env: { ...process.env, AGENTDB_TEST_CLI: cli, AGENTDB_TEST_DRIVERS: 'sqljs' },
+});
+console.log('PASS: installed CLI version and real MCP training/persistence/policies.');
