@@ -3,6 +3,22 @@ import type { FannModels } from '../controllers/FannModels.js';
 const id = { type: 'string', minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$' };
 const numbers = { type: 'array', minItems: 1, maxItems: 524288, items: { type: 'number' } };
 const integer = (maximum: number) => ({ type: 'integer', minimum: 1, maximum });
+const checkpoint = {
+  type: 'object', additionalProperties: false, required: ['schema', 'layers'],
+  properties: {
+    schema: { const: 'ruv-fann.dense-layers/1' },
+    layers: { type: 'array', minItems: 1, maxItems: 64, items: {
+      type: 'object', additionalProperties: false,
+      required: ['inputs', 'outputs', 'weights', 'activation', 'steepness'],
+      properties: { inputs: integer(4096), outputs: integer(4096),
+        weights: { ...numbers, maxItems: 262144 },
+        bias: { anyOf: [{ type: 'null' }, { ...numbers, maxItems: 4096 }] },
+        activation: { type: 'string', maxLength: 64, description: 'Case-sensitive FANN activation, e.g. Linear, Sigmoid, Tanh or ReLU.' },
+        steepness: { type: 'number', exclusiveMinimum: 0 },
+      },
+    } },
+  },
+};
 const define = (name: string, description: string, properties: Record<string, unknown>, required: string[]) => ({
   name: `agentdb_neural_${name}`, description,
   inputSchema: { type: 'object' as const, properties, required, additionalProperties: false },
@@ -10,7 +26,7 @@ const define = (name: string, description: string, properties: Record<string, un
 
 export const FANN_TOOLS = [
   define('create', 'Persist a dense ruv-FANN model checkpoint. Existing model IDs are rejected.', {
-    id, model: { type: 'object', description: 'ruv-fann.dense-layers/1 checkpoint with layers, weights, biases and activations.' },
+    id, model: checkpoint,
   }, ['id', 'model']),
   define('get', 'Read a persisted neural model and its revision.', { id }, ['id']),
   define('list', 'List neural model metadata without checkpoint weights.', { limit: integer(100) }, []),
@@ -49,6 +65,13 @@ export async function dispatchFannTool(models: FannModels, name: string, raw: un
   switch (name) {
     case 'agentdb_neural_create':
       if (!args.model || typeof args.model !== 'object' || Array.isArray(args.model)) throw new Error('model must be a dense checkpoint object');
+      for (const key of Object.keys(args.model)) if (!['schema', 'layers'].includes(key)) throw new Error(`Unknown model field: ${key}`);
+      const layers = (args.model as Record<string, unknown>).layers;
+      if (Array.isArray(layers)) for (const layer of layers) {
+        if (layer && typeof layer === 'object') for (const key of Object.keys(layer)) {
+          if (!['inputs', 'outputs', 'weights', 'bias', 'activation', 'steepness'].includes(key)) throw new Error(`Unknown layer field: ${key}`);
+        }
+      }
       return models.create(modelId, JSON.stringify(args.model));
     case 'agentdb_neural_get': return models.get(modelId);
     case 'agentdb_neural_list': return models.list(bounded('limit', 100));
