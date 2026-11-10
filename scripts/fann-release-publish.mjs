@@ -43,6 +43,9 @@ async function qualify(spec) {
     writeFileSync(join(temp, '.npmrc'), 'registry=https://registry.npmjs.org\n');
     const env = { ...consumerEnv, NPM_CONFIG_USERCONFIG: join(temp, '.npmrc') };
     run('npm', ['install', '--omit=optional', '--ignore-scripts', '--no-audit', '--no-fund', spec], temp, env);
+    const lock = JSON.parse(readFileSync(join(temp, 'package-lock.json'), 'utf8'));
+    const expectedIntegrity = 'sha512-' + createHash('sha512').update(readFileSync(tarball)).digest('base64');
+    if (lock.packages?.['node_modules/agentdb']?.integrity !== expectedIntegrity) throw new Error('Installed public package differs from sealed bytes');
     run(process.execPath, [resolve('scripts/fann-packed-consumer.mjs')], temp, env);
   } finally { rmSync(temp, { recursive: true, force: true }); }
 }
@@ -60,8 +63,20 @@ const receiptPath = join(dir, 'publication-receipt.json');
 writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx' });
 const notes = join(dir, 'release-notes.md');
 writeFileSync(notes, 'Persist dense neural models in AgentDB with real ruv-FANN WASM inference, SGD/AdamW training, revision-safe updates, and bounded prepared-model caching. Six MCP tools enforce readonly, learning and admin policies. Includes ruv-fann@0.1.0 and ruv-fann-wasm@0.1.0.\n\nValidated exact npm archive on Node22 and Node24, 458 library tests, both SQLite MCP paths, and public-install persistence/training checks.\n');
+function verifyTag(allowMissing = false) {
+  const result = spawnSync('gh', ['api', `repos/${process.env.GITHUB_REPOSITORY}/git/ref/tags/${seal.releaseTag}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  if (result.status !== 0) {
+    if (allowMissing && result.stderr.includes('404')) return;
+    throw new Error('Cannot verify release tag');
+  }
+  let object = JSON.parse(result.stdout).object;
+  for (let depth = 0; object.type === 'tag' && depth < 5; depth++) object = JSON.parse(run('gh', ['api', `repos/${process.env.GITHUB_REPOSITORY}/git/tags/${object.sha}`])).object;
+  if (object.type !== 'commit' || object.sha !== seal.sourceSha) throw new Error('Release tag does not resolve to sealed source SHA');
+}
+verifyTag(true);
 const existing = spawnSync('gh', ['release', 'view', seal.releaseTag, '--json', 'tagName'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 if (existing.status !== 0) run('gh', ['release', 'create', seal.releaseTag, tarball, join(dir, 'candidate-seal.json'), receiptPath, '--target', seal.sourceSha, '--title', 'AgentDB 3.8.0 — persisted FANN models', '--notes-file', notes]);
+verifyTag();
 const downloaded = mkdtempSync(join(tmpdir(), 'agentdb-release-'));
 try {
   run('gh', ['release', 'download', seal.releaseTag, '--dir', downloaded]);
