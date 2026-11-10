@@ -1,6 +1,6 @@
 {
   "name": "agentdb",
-  "version": "3.9.0",
+  "version": "3.10.0",
   "description": "Agent memory and vector database for AI agents: single-file HNSW search, episodic memory, causal graph, reinforcement learning and MCP tools.",
   "type": "module",
   "main": "dist/src/index.js",
@@ -51,7 +51,8 @@
     "./services/federated-learning": "./dist/src/services/federated-learning.js",
     "./model": "./dist/src/model/ModelCacheLoader.js",
     "./controllers/FannModels": "./dist/src/controllers/FannModels.js",
-    "./controllers/WeightPrograms": "./dist/src/controllers/WeightPrograms.js"
+    "./controllers/WeightPrograms": "./dist/src/controllers/WeightPrograms.js",
+    "./controllers/NeuralReranker": "./dist/src/controllers/NeuralReranker.js"
   },
   "scripts": {
     "build": "npm run build:ts && npm run copy:schemas && npm run build:browser",
@@ -89,7 +90,9 @@
     "benchmark:crud": "tsx benchmarks/crud-benchmark.mts",
     "benchmark:ecosystem": "tsx benchmarks/ecosystem-benchmark.mts",
     "test:mcp-fann": "node tests/mcp-fann-e2e.mjs",
-    "test:mcp-wsp": "node tests/mcp-wsp-e2e.mjs"
+    "test:mcp-wsp": "node tests/mcp-wsp-e2e.mjs",
+    "test:mcp-rerank": "node tests/mcp-rerank-e2e.mjs",
+    "eval:neural-rerank": "node scripts/neural-rerank-eval.mjs"
   },
   "keywords": [
     "agent-memory",

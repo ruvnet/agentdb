@@ -371,6 +371,23 @@ Built by [rUv](https://ruv.io) · [ruv.io](https://ruv.io) · [Source](https://g
 <!-- weaver:seo:footer:end -->
 
 
+### Learned memory reranking (3.10)
+
+`NeuralReranker` learns a small local ruv-FANN scorer from labeled query groups.
+It evaluates NDCG and MRR against baseline and active rankings before explicit
+promotion. Opt-in `neuralRerank` queries default to shadow mode, preserving normal
+results while exposing scores. Active mode ranks a bounded candidate pool;
+revisioned checkpoints support rollback. Ten MCP tools expose training,
+evaluation and model management, with admin-only promotion and rollback.
+
+The four versioned inputs are similarity, historical reward, success and recency.
+Supply independent relevance labels and separate evaluation queries. Included
+synthetic benchmarks validate the pipeline, not production retrieval quality.
+Agents can also inspect weights and propose hash-bound WSP edits without training;
+these candidates must pass the same evaluation gates before promotion.
+
+See [the learned memory reranking guide](https://github.com/ruvnet/agentdb/blob/main/docs/neural/memory-reranking.md).
+
 ### Persisted neural models (3.8)
 
 `WeightPrograms` from `agentdb/controllers/WeightPrograms` adds durable,

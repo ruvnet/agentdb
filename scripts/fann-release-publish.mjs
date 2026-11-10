@@ -8,11 +8,31 @@ const run = (cmd, args, cwd = process.cwd(), env = process.env) => execFileSync(
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const seal = JSON.parse(readFileSync(join(dir, 'candidate-seal.json'), 'utf8'));
 if (process.env.GITHUB_ACTIONS !== 'true' || process.env.GITHUB_WORKFLOW !== 'protected-release' || process.env.GITHUB_REF !== 'refs/heads/main' || process.env.GITHUB_SHA !== seal.sourceSha || process.env.EXPECTED_SHA !== seal.sourceSha || run('git', ['rev-parse', 'HEAD']) !== seal.sourceSha) throw new Error('Protected exact-main release context required');
-if (seal.schema !== 'agentdb.neural-release/1' || seal.name !== 'agentdb' || seal.version !== '3.9.0' || seal.filename !== 'agentdb-3.9.0.tgz' || seal.releaseTag !== 'v3.9.0' || seal.qualification?.packedConsumer !== 'passed') throw new Error('Invalid candidate seal');
+if (seal.schema !== 'agentdb.neural-release/1' || seal.name !== 'agentdb' || seal.version !== '3.10.0' || seal.filename !== 'agentdb-3.10.0.tgz' || seal.releaseTag !== 'v3.10.0' || seal.qualification?.packedConsumer !== 'passed') throw new Error('Invalid candidate seal');
 if (run('gh', ['api', `repos/${process.env.GITHUB_REPOSITORY}/commits/main`, '--jq', '.sha']) !== seal.sourceSha) throw new Error('Main moved after qualification');
 if (run('gh', ['issue', 'list', '--label', 'release-blocker', '--state', 'open', '--json', 'number', '--jq', 'length']) !== '0') throw new Error('Open release blockers');
 const tests = JSON.parse(readFileSync(join(dir, 'library-tests.json'), 'utf8'));
 if (hash(readFileSync(join(dir, 'library-tests.json'))) !== seal.qualification.testReportSha256 || !tests.success || tests.numPassedTests !== seal.qualification.testsPassed || tests.numPassedTests !== tests.numTotalTests || tests.numPassedTests < 1 || tests.numPendingTests || tests.numTodoTests) throw new Error('Candidate test evidence mismatch');
+const rerankPath = join(dir, 'neural-rerank-evaluation.json');
+const rerankBytes = readFileSync(rerankPath);
+const rerank = JSON.parse(rerankBytes);
+const requiredRerankChecks = ['heldoutQueryIdsDisjoint', 'shadowPreservesOrder', 'promotionChangesOrder', 'rollbackRestoresBaseline', 'deterministicTieOrder', 'finiteScores', 'rejectedEvaluationCannotPromote', 'gradientFreePatchCandidate'];
+if (hash(rerankBytes) !== seal.qualification.neuralRerankEvaluationSha256 || rerank.schema !== 'agentdb.neural-rerank-eval/1' ||
+    rerank.status !== 'passed' || rerank.dataset !== 'synthetic-v1' || rerank.sourceSha !== seal.sourceSha ||
+    !Number.isInteger(rerank.trainingQueries) || rerank.trainingQueries < 1 || !Number.isInteger(rerank.validationQueries) || rerank.validationQueries < 1 ||
+    !Number.isInteger(rerank.heldoutQueries) || rerank.heldoutQueries < 5 ||
+    !Number.isFinite(rerank.baseline?.ndcg) || rerank.baseline.ndcg < 0 || rerank.baseline.ndcg > 1 || !Number.isFinite(rerank.baseline?.mrr) || rerank.baseline.mrr < 0 || rerank.baseline.mrr > 1 ||
+    !Number.isFinite(rerank.candidate?.ndcg) || rerank.candidate.ndcg < 0 || rerank.candidate.ndcg > 1 || !Number.isFinite(rerank.candidate?.mrr) || rerank.candidate.mrr < 0 || rerank.candidate.mrr > 1 ||
+    !(rerank.candidate.ndcg > rerank.baseline.ndcg) || rerank.candidate.mrr < rerank.baseline.mrr || !Number.isFinite(rerank.improvement) || !(rerank.improvement > 0) ||
+    Math.abs(rerank.improvement - (rerank.candidate.ndcg - rerank.baseline.ndcg)) > 1e-12 || requiredRerankChecks.some(key => rerank.checks?.[key] !== true) ||
+    Object.values(rerank.checks ?? {}).some(value => value !== true)) throw new Error('Neural reranker evaluation evidence mismatch');
+if (rerank.weightPatch?.method !== 'Predetermined tanh(reward) toy scorer; no training' || rerank.weightPatch.edits !== 49 ||
+    !Number.isFinite(rerank.weightPatch.baseline?.ndcg) || rerank.weightPatch.baseline.ndcg < 0 || rerank.weightPatch.baseline.ndcg > 1 ||
+    !Number.isFinite(rerank.weightPatch.baseline?.mrr) || rerank.weightPatch.baseline.mrr < 0 || rerank.weightPatch.baseline.mrr > 1 ||
+    !Number.isFinite(rerank.weightPatch.candidate?.ndcg) || rerank.weightPatch.candidate.ndcg < 0 || rerank.weightPatch.candidate.ndcg > 1 ||
+    !Number.isFinite(rerank.weightPatch.candidate?.mrr) || rerank.weightPatch.candidate.mrr < 0 || rerank.weightPatch.candidate.mrr > 1 ||
+    !(rerank.weightPatch.candidate.ndcg > rerank.weightPatch.baseline.ndcg) || rerank.weightPatch.candidate.mrr < rerank.weightPatch.baseline.mrr)
+  throw new Error('Neural reranker gradient-free WSP evidence mismatch');
 const tarball = join(dir, seal.filename);
 if (hash(readFileSync(tarball)) !== seal.sha256) throw new Error('Candidate digest mismatch');
 const metadata = JSON.parse(run('tar', ['-xOzf', tarball, 'package/package.json']));
@@ -57,12 +77,13 @@ if (!await download()) {
 }
 const bytes = await waitPublic();
 writeFileSync(join(dir, 'npm-public.tgz'), bytes);
-await qualify('agentdb@3.9.0');
-const receipt = { schema: 'agentdb.neural-publication/1', sourceSha: seal.sourceSha, name: seal.name, version: seal.version, sha256: seal.sha256, publicConsumer: 'passed', node: process.version };
+await qualify('agentdb@3.10.0');
+const receipt = { schema: 'agentdb.neural-publication/1', sourceSha: seal.sourceSha, name: seal.name, version: seal.version, sha256: seal.sha256,
+  neuralRerankEvaluationSha256: seal.qualification.neuralRerankEvaluationSha256, publicConsumer: 'passed', node: process.version };
 const receiptPath = join(dir, 'publication-receipt.json');
 writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx' });
 const notes = join(dir, 'release-notes.md');
-writeFileSync(notes, 'Adds durable gradient-free weight programs through ruv-fann-wsp 0.1.0 and ruv-fann 0.1.2: real WASM patch evaluation, stored proposal authority, revision/generation CAS, bounded checkpoint lineage, rollback, and six strict MCP tools. Caller-supplied evaluation data does not establish generalization. See docs/neural/weight-programs.md and CHANGELOG.md.\n');
+writeFileSync(notes, 'Adds a SQLite-backed learned memory reranker using ruv-fann 0.1.2, including direct hash-bound weight-patch candidates that use no gradients or hidden training. Both trained and patched candidates share held-out evaluation, explicit promotion and rollback gates. The attached synthetic benchmark is a deterministic qualification fixture, not a production effectiveness claim. See docs/neural/memory-reranking.md and CHANGELOG.md.\n');
 function verifyTag(allowMissing = false) {
   const result = spawnSync('gh', ['api', `repos/${process.env.GITHUB_REPOSITORY}/git/ref/tags/${seal.releaseTag}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   if (result.status !== 0) {
@@ -75,12 +96,12 @@ function verifyTag(allowMissing = false) {
 }
 verifyTag(true);
 const existing = spawnSync('gh', ['release', 'view', seal.releaseTag, '--json', 'tagName'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-if (existing.status !== 0) run('gh', ['release', 'create', seal.releaseTag, tarball, join(dir, 'candidate-seal.json'), receiptPath, '--target', seal.sourceSha, '--title', 'AgentDB 3.9.0 — durable weight-space programs', '--notes-file', notes]);
+if (existing.status !== 0) run('gh', ['release', 'create', seal.releaseTag, tarball, join(dir, 'candidate-seal.json'), rerankPath, receiptPath, '--target', seal.sourceSha, '--title', 'AgentDB 3.10.0 — learned memory reranking', '--notes-file', notes]);
 verifyTag();
 const downloaded = mkdtempSync(join(tmpdir(), 'agentdb-release-'));
 try {
   run('gh', ['release', 'download', seal.releaseTag, '--dir', downloaded]);
-  for (const file of [seal.filename, 'candidate-seal.json', 'publication-receipt.json']) if (hash(readFileSync(join(downloaded, file))) !== hash(readFileSync(join(dir, file)))) throw new Error(`GitHub artifact mismatch: ${file}`);
+  for (const file of [seal.filename, 'candidate-seal.json', 'neural-rerank-evaluation.json', 'publication-receipt.json']) if (hash(readFileSync(join(downloaded, file))) !== hash(readFileSync(join(dir, file)))) throw new Error(`GitHub artifact mismatch: ${file}`);
 } finally { rmSync(downloaded, { recursive: true, force: true }); }
 writeFileSync(join(dir, 'publication-verified.json'), JSON.stringify({ ...receipt, githubArtifacts: 'byte-equal', status: 'verified' }, null, 2) + '\n', { flag: 'wx' });
 console.log('AgentDB npm and GitHub release artifacts verified against the candidate seal.');

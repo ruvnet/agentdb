@@ -6,6 +6,7 @@ on:
       - 'src/**'
       - 'tests/**'
       - 'scripts/fann-*.mjs'
+      - 'scripts/neural-rerank-eval.mjs'
       - '.github/workflows/protected-neural-release.yml'
       - '.agents/**'
       - 'plugins/*/skills/**'
@@ -35,16 +36,20 @@ jobs:
         run: npm audit --omit=optional --audit-level=high
       - name: Typecheck and build
         run: npm run build
-      - name: CRUD, hybrid retrieval, ecosystem integration (incl. ruvllm API contract), graph, attention validation and RVF flush unit tests
-        run: npx vitest run tests/unit/controllers/weight-programs.test.ts tests/unit/mcp/wsp-tools.test.ts tests/unit/controllers/fann-models.test.ts tests/mcp-policy.test.ts tests/unit/controllers/crud-adr017.test.ts tests/unit/controllers/ReflexionMemory-hybrid.test.ts tests/unit/controllers/episode-rerank.test.ts tests/unit/search tests/unit/integrations tests/unit/controllers/MincutService.test.ts tests/unit/sparsification.test.ts tests/unit/node-runtime-floor.test.ts tests/unit/optional-native-floors.test.ts tests/unit/readme-quickstart.test.ts tests/better-sqlite3-statement-gc.test.ts tests/backends/federated-session.test.ts tests/backends/federated-coordinator-args.test.ts tests/unit/attention-edge-cases.test.ts tests/backends/rvf-flush-retry.test.ts tests/backends/rvf-backend-extended.test.ts tests/backends/rvf-04-metadata.test.ts tests/backends/rvf-absent-fallback.test.ts tests/backends/rvf-in-memory.test.ts tests/backends/rvf-049-upsert-lock.test.ts tests/db-fallback-native.test.ts --reporter=json --outputFile=/tmp/fann-release-tests.json
+      - name: CRUD, reranking, hybrid retrieval, ecosystem integration, graph, attention validation and RVF flush unit tests
+        run: npx vitest run tests/unit/controllers/neural-reranker.test.ts tests/unit/controllers/neural-rerank-retrieval.test.ts tests/unit/mcp/rerank-tools.test.ts tests/unit/controllers/weight-programs.test.ts tests/unit/mcp/wsp-tools.test.ts tests/unit/controllers/fann-models.test.ts tests/mcp-policy.test.ts tests/unit/controllers/crud-adr017.test.ts tests/unit/controllers/ReflexionMemory-hybrid.test.ts tests/unit/controllers/episode-rerank.test.ts tests/unit/search tests/unit/integrations tests/unit/controllers/MincutService.test.ts tests/unit/sparsification.test.ts tests/unit/node-runtime-floor.test.ts tests/unit/optional-native-floors.test.ts tests/unit/readme-quickstart.test.ts tests/better-sqlite3-statement-gc.test.ts tests/backends/federated-session.test.ts tests/backends/federated-coordinator-args.test.ts tests/unit/attention-edge-cases.test.ts tests/backends/rvf-flush-retry.test.ts tests/backends/rvf-backend-extended.test.ts tests/backends/rvf-04-metadata.test.ts tests/backends/rvf-absent-fallback.test.ts tests/backends/rvf-in-memory.test.ts tests/backends/rvf-049-upsert-lock.test.ts tests/db-fallback-native.test.ts --reporter=json --outputFile=/tmp/fann-release-tests.json
       - name: Neural MCP training and persistence
         run: npm run test:mcp-fann
       - name: Durable weight-program MCP proposals and rollback
         run: npm run test:mcp-wsp
+      - name: Neural reranker MCP policy, installed stdio and persistence
+        run: npm run test:mcp-rerank
       - name: MCP stdio purity
         run: npm run test:mcp-stdio
       - name: MCP CRUD end-to-end (sql.js and better-sqlite3)
         run: npm run test:mcp-crud
+      - name: Deterministic held-out neural reranker evaluation
+        run: npm run eval:neural-rerank
       - name: Pack once and qualify exact consumer bytes
         run: node scripts/fann-release-pack.mjs "$RUNNER_TEMP/candidate"
       - uses: actions/upload-artifact@v4

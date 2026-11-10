@@ -1,6 +1,10 @@
 export type AgentDbMcpProfile = 'readonly' | 'retrieval' | 'learning' | 'admin';
 
 const READONLY_TOOLS = [
+  'agentdb_rerank_get',
+  'agentdb_rerank_list',
+  'agentdb_rerank_rank',
+  'agentdb_rerank_inspect',
   'agentdb_wsp_get',
   'agentdb_wsp_list',
   'agentdb_neural_get',
@@ -30,6 +34,10 @@ const READONLY_TOOLS = [
 ] as const;
 
 const LEARNING_TOOLS = [
+  'agentdb_rerank_create',
+  'agentdb_rerank_patch',
+  'agentdb_rerank_train',
+  'agentdb_rerank_evaluate',
   'agentdb_wsp_create',
   'agentdb_wsp_propose',
   'agentdb_wsp_promote',
@@ -66,6 +74,8 @@ const LEARNING_TOOLS = [
 
 /** Tools that reset or delete data: only the admin profile (or an explicit allow) grants them. */
 export const ADMIN_ONLY_TOOLS: readonly string[] = [
+  'agentdb_rerank_promote',
+  'agentdb_rerank_rollback',
   'agentdb_wsp_rollback',
   'agentdb_neural_delete',
   'agentdb_init',

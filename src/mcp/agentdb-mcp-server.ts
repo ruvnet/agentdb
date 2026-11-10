@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { NeuralReranker } from '../controllers/NeuralReranker.js';
+import { RERANK_TOOLS, isRerankTool, dispatchRerankTool, NEURAL_RERANK_QUERY_SCHEMA, validateNeuralRerankQuery } from './rerank-tools.js';
 import { WeightPrograms } from '../controllers/WeightPrograms.js';
 import { WSP_TOOLS, isWspTool, dispatchWspTool } from './wsp-tools.js';
 import { FannModels } from '../controllers/FannModels.js';
@@ -57,6 +59,7 @@ import {
   isMcpToolAllowed,
 } from '../security/mcp-policy.js';
 import { resetDatabaseTables } from './reset-database.js';
+import { SCHEMA_SQL, FRONTIER_SCHEMA_SQL } from '../schemas/inline.js';
 
 // ES module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -277,19 +280,15 @@ db.pragma('cache_size = -64000');
 const schemaPath = path.join(__dirname, '../schemas/schema.sql');
 const frontierSchemaPath = path.join(__dirname, '../schemas/frontier-schema.sql');
 
+/** Installed packages keep SQL assets under dist/schemas, whereas this module
+ * is under dist/src/mcp. Canonical generated constants cover either asset layout
+ * and recreate the episodic tables after reset without duplicating their DDL. */
+function initializeMemorySchemas(): void {
+  db.exec(fs.existsSync(schemaPath) ? fs.readFileSync(schemaPath, 'utf-8') : SCHEMA_SQL);
+  db.exec(fs.existsSync(frontierSchemaPath) ? fs.readFileSync(frontierSchemaPath, 'utf-8') : FRONTIER_SCHEMA_SQL);
+}
 try {
-  if (fs.existsSync(schemaPath)) {
-    const schemaSQL = fs.readFileSync(schemaPath, 'utf-8');
-    db.exec(schemaSQL);
-    console.error('✅ Main schema loaded');
-  }
-
-  if (fs.existsSync(frontierSchemaPath)) {
-    const frontierSQL = fs.readFileSync(frontierSchemaPath, 'utf-8');
-    db.exec(frontierSQL);
-    console.error('✅ Frontier schema loaded');
-  }
-
+  initializeMemorySchemas();
   console.error('✅ Database schema initialized');
 } catch (error) {
   console.error('⚠️  Schema initialization failed, using fallback:', (error as Error).message);
@@ -307,7 +306,8 @@ await embeddingService.initialize();
 
 // Initialize all controllers
 const causalGraph = new CausalMemoryGraph(db);
-const reflexion = new ReflexionMemory(db, embeddingService);
+let neuralReranker = new NeuralReranker(db);
+let reflexion = new ReflexionMemory(db, embeddingService, undefined, undefined, undefined, undefined, neuralReranker);
 const skills = new SkillLibrary(db, embeddingService);
 const causalRecall = new CausalRecall(db, embeddingService);
 const learner = new NightlyLearner(db, embeddingService);
@@ -349,6 +349,13 @@ async function describeCapabilities(): Promise<Record<string, unknown>> {
         : DEFAULT_EXACT_SEARCH_THRESHOLD,
       patternRerankWeights: DEFAULT_RERANK_WEIGHTS,
     },
+    learnedReranking: {
+      runtime: 'ruv-fann', features: 'agentdb.rerank-features/1', defaultMode: 'shadow',
+      labels: 'caller-supplied-query-groups', maxCandidates: 64, provider: null,
+      weightSpaceProgramming: { runtime: 'ruv-fann-wsp', proposalSource: 'caller-supplied',
+        gradients: false, provider: null, automaticPromotion: false },
+      tools: RERANK_TOOLS.map(tool => tool.name).filter(name => isMcpToolAllowed(name, toolPolicy)),
+    },
     weightPrograms: {
       runtime: 'ruv-fann-wsp', persistence: 'sqlite-checkpoints-and-proposals', gradients: false, provider: null,
       datasetSource: 'caller-supplied', maxProposals: 16, maxHistory: 32, proposalMaxAgeHours: 24,
@@ -371,7 +378,7 @@ async function describeCapabilities(): Promise<Record<string, unknown>> {
 const server = new Server(
   {
     name: 'agentdb',
-    version: '3.9.0',
+    version: '3.10.0',
   },
   {
     capabilities: {
@@ -384,6 +391,7 @@ const server = new Server(
 // Tool Definitions
 // ============================================================================
 const tools = [
+  ...RERANK_TOOLS,
   ...FANN_TOOLS,
   ...WSP_TOOLS,
   // ==========================================================================
@@ -450,6 +458,7 @@ const tools = [
         min_similarity: { type: 'number', description: 'Minimum similarity threshold (0-1)', default: 0.0 },
         hybrid: { type: 'boolean', description: 'Fuse BM25 keyword ranking with the vector ranking (ADR-016)', default: true },
         rerank: { type: 'boolean', description: 'Rerank the top candidates with a local cross-encoder (ADR-016; ~200 ms on CPU, 23 MB model on first use)', default: false },
+        neuralRerank: NEURAL_RERANK_QUERY_SCHEMA,
         filters: {
           type: 'object',
           properties: {
@@ -1358,6 +1367,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (!isMcpToolAllowed(name, toolPolicy)) {
       throw new Error(`MCP tool "${name}" is not permitted by the active AgentDB capability policy`);
     }
+    if (isRerankTool(name)) {
+      const result = await dispatchRerankTool(neuralReranker, name, args);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
     if (isWspTool(name)) {
       const result = await dispatchWspTool(weightPrograms, name, args);
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
@@ -1374,10 +1387,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Only ever the open database: a caller-supplied path is never touched
         if (args?.reset === true) {
           resetDatabaseTables(db);
+          initializeMemorySchemas();
           fannModels.dispose();
           weightPrograms.dispose();
+          neuralReranker.dispose();
           fannModels = new FannModels(db);
           weightPrograms = new WeightPrograms(db);
+          neuralReranker = new NeuralReranker(db);
+          reflexion = new ReflexionMemory(db, embeddingService, undefined, undefined, undefined, undefined, neuralReranker);
         }
 
         // Initialize schema
@@ -1479,14 +1496,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'agentdb_search': {
         const queryText = validateTaskString(args?.query, 'query');
         const k = Math.floor(validateNumericRange(args?.k ?? 10, 'k', 1, MAX_SEARCH_K));
-        const minSimilarity = (args?.min_similarity as number) || 0.0;
+        const minSimilarity = args?.neuralRerank === undefined ? ((args?.min_similarity as number) || 0.0) : validateNumericRange(args?.min_similarity ?? 0, 'min_similarity', 0, 1);
         const filters = args?.filters as any;
+        if (args?.neuralRerank !== undefined) validateNeuralRerankQuery(args.neuralRerank);
 
         const query: any = {
           task: queryText,
           k,
           hybrid: args?.hybrid !== false,
           rerank: args?.rerank === true,
+          ...(args?.neuralRerank === undefined ? {} : { neuralRerank: args.neuralRerank, ...(minSimilarity > 0 ? { minSimilarity } : {}) }),
         };
 
         if (filters) {
@@ -1515,7 +1534,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     filteredResults.slice(0, 5).map((r, i) =>
                       `${i + 1}. [ID: ${r.id}] Similarity: ${(r.similarity || 0).toFixed(3)}\n` +
                       `   Task: ${r.task.substring(0, 80)}${r.task.length > 80 ? '...' : ''}\n` +
-                      `   Reward: ${r.reward.toFixed(2)}`
+                      `   Reward: ${r.reward.toFixed(2)}` +
+                    (r.neuralRerank ? `\n   Neural rerank: ${r.neuralRerank.mode}/${r.neuralRerank.status}` : '')
                     ).join('\n\n') +
                     (filteredResults.length > 5 ? `\n\n... and ${filteredResults.length - 5} more results` : ''),
             },
@@ -2947,6 +2967,7 @@ async function main() {
 
     fannModels.dispose();
     weightPrograms.dispose();
+    neuralReranker.dispose();
     let persistenceFailed = false;
 
     // Save database before exit

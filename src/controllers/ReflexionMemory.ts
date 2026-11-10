@@ -39,6 +39,7 @@ import {
   RERANK_DEPTH,
 } from './episode-hybrid.js';
 import { screenStoredText } from '../security/injection-guard.js';
+import { episodeRerankFeatures, type NeuralReranker } from './NeuralReranker.js';
 
 function finiteNumber(value: unknown, name: string): number {
   const n = Number(value);
@@ -84,6 +85,45 @@ export interface Episode {
 export interface EpisodeWithEmbedding extends Episode {
   embedding?: Float32Array;
   similarity?: number;
+  neuralRerank?: {
+    mode: 'shadow' | 'active'; revision?: number; score?: number; modelHash?: string | null;
+    status: 'scored' | 'unavailable' | 'error' | 'unsupported';
+  };
+}
+export interface NeuralRerankQuery { id: string; mode?: 'shadow' | 'active'; candidateId?: string }
+
+/** Snapshot only plain own data before retrieval's first asynchronous boundary. */
+function neuralQuerySnapshot(query: ReflexionQuery): ReflexionQuery {
+  const allowed = ['task', 'currentState', 'k', 'minReward', 'onlyFailures', 'onlySuccesses', 'timeWindowDays', 'hybrid', 'rerank', 'neuralRerank', 'minSimilarity'];
+  const record = (value: unknown, fields: string[]): Record<string, any> => {
+    if (!value || typeof value !== 'object' || Array.isArray(value) ||
+        ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new Error('Invalid neural retrieval data object');
+    const result: Record<string, any> = Object.create(null);
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== 'string' || !fields.includes(key)) throw new Error('Unknown neural retrieval option');
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+      if (!Object.hasOwn(descriptor, 'value')) throw new Error('Neural retrieval accessors are not supported');
+      result[key] = descriptor.value;
+    }
+    return result;
+  };
+  const value = record(query, allowed);
+  const neural = record(value.neuralRerank, ['id', 'mode', 'candidateId']);
+  const id = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
+  if (!id(neural.id) || (neural.candidateId !== undefined && !id(neural.candidateId))) throw new Error('Invalid neural reranker id');
+  const mode = neural.mode === undefined ? 'shadow' : neural.mode;
+  if (mode !== 'shadow' && mode !== 'active') throw new Error('Invalid neural reranking mode');
+  if (mode === 'active' && neural.candidateId !== undefined) throw new Error('candidateId is only permitted in shadow mode');
+  if (typeof value.task !== 'string' || !value.task.trim() || value.task.length > 10000) throw new Error('Invalid neural retrieval task');
+  if (value.currentState !== undefined && (typeof value.currentState !== 'string' || value.currentState.length > 10000)) throw new Error('Invalid neural currentState');
+  const k = value.k === undefined ? 5 : value.k;
+  if (!Number.isSafeInteger(k) || k < 1 || k > 64) throw new Error('Invalid neural retrieval k');
+  for (const field of ['hybrid', 'rerank', 'onlyFailures', 'onlySuccesses'])
+    if (value[field] !== undefined && typeof value[field] !== 'boolean') throw new Error(`Invalid neural ${field}`);
+  if (value.minReward !== undefined && (typeof value.minReward !== 'number' || !Number.isFinite(value.minReward))) throw new Error('Invalid neural minReward');
+  if (value.minSimilarity !== undefined && (typeof value.minSimilarity !== 'number' || !Number.isFinite(value.minSimilarity) || value.minSimilarity < -1 || value.minSimilarity > 1)) throw new Error('Invalid neural minSimilarity');
+  if (value.timeWindowDays !== undefined && (typeof value.timeWindowDays !== 'number' || !Number.isFinite(value.timeWindowDays) || value.timeWindowDays <= 0)) throw new Error('Invalid neural timeWindowDays');
+  return { ...value, k, neuralRerank: { id: neural.id, mode, ...(neural.candidateId === undefined ? {} : { candidateId: neural.candidateId }) } } as ReflexionQuery;
 }
 
 export interface ReflexionQuery {
@@ -104,6 +144,10 @@ export interface ReflexionQuery {
    * on CPU and downloads a 23 MB model on first use. Needs hybrid; falls back to the hybrid order on any error.
    */
   rerank?: boolean;
+  /** Explicit opt-in; shadow preserves the existing returned baseline order. */
+  neuralRerank?: NeuralRerankQuery;
+  /** Neural opt-in only: filter eligible candidates before learned scoring. */
+  minSimilarity?: number;
 }
 
 export class ReflexionMemory {
@@ -121,7 +165,8 @@ export class ReflexionMemory {
     vectorBackend?: VectorBackend,
     learningBackend?: LearningBackend,
     graphBackend?: GraphBackend,
-    cacheConfig?: QueryCacheConfig
+    cacheConfig?: QueryCacheConfig,
+    private readonly neuralReranker?: NeuralReranker
   ) {
     this.db = db;
     this.embedder = embedder;
@@ -294,6 +339,12 @@ export class ReflexionMemory {
    * Results are cached for improved performance
    */
   async retrieveRelevant(query: ReflexionQuery): Promise<EpisodeWithEmbedding[]> {
+    // Reading descriptors avoids invoking a caller's config getter while detecting opt-in.
+    const neuralDescriptor = Object.getOwnPropertyDescriptor(query, 'neuralRerank');
+    if (!neuralDescriptor && 'neuralRerank' in query) throw new Error('Inherited neural retrieval options are not supported');
+    if (neuralDescriptor && !Object.hasOwn(neuralDescriptor, 'value')) throw new Error('Neural retrieval accessors are not supported');
+    if (neuralDescriptor?.value !== undefined) query = neuralQuerySnapshot(query);
+    const neural = query.neuralRerank;
     const {
       task,
       currentState = '',
@@ -313,35 +364,65 @@ export class ReflexionMemory {
       'episodes'
     );
 
-    const cached = this.queryCache.get<EpisodeWithEmbedding[]>(cacheKey);
-    if (cached) {
+    const cached = neural ? undefined : this.queryCache.get<EpisodeWithEmbedding[]>(cacheKey);
+    if (cached && !neural) {
       return cached;
     }
 
+    const retrievalQuery = neural?.mode === 'active' && this.neuralReranker && !this.graphBackend ? { ...query, k: 64 } : query;
     // Generate and enhance query embedding
     const queryEmbedding = await this.prepareQueryEmbedding(task, currentState, k);
 
-    // Try different retrieval strategies in order of preference
-    let episodes: EpisodeWithEmbedding[] = [];
-
-    if (this.graphBackend && 'searchSimilarEpisodes' in this.graphBackend) {
-      episodes = await this.retrieveFromGraphAdapter(queryEmbedding, query);
-    } else if (this.graphBackend && 'execute' in this.graphBackend) {
-      episodes = await this.retrieveFromGenericGraph(query);
-    } else {
-      // Hybrid retrieval widens the dense pool, then fuses it with the BM25 ranking.
-      const pooled = hybrid ? { ...query, k: Math.min(Math.max(k * 4, 50), HYBRID_MAX_POOL) } : query;
-      episodes = this.vectorBackend
-        ? await this.retrieveFromVectorBackend(queryEmbedding, pooled)
-        : await this.retrieveFromSQLFallback(queryEmbedding, pooled);
-      if (hybrid) {
-        episodes = await this.hybridRank([task, currentState].filter(Boolean).join('\n'), episodes, { ...query, rerank }, queryEmbedding);
+    const retrieve = async (candidateQuery: ReflexionQuery): Promise<EpisodeWithEmbedding[]> => {
+      let found: EpisodeWithEmbedding[];
+      if (this.graphBackend && 'searchSimilarEpisodes' in this.graphBackend) {
+        found = await this.retrieveFromGraphAdapter(queryEmbedding, candidateQuery);
+      } else if (this.graphBackend && 'execute' in this.graphBackend) {
+        found = await this.retrieveFromGenericGraph(candidateQuery);
+      } else {
+        const requested = candidateQuery.k ?? 5;
+        const pooled = hybrid ? { ...candidateQuery, k: Math.min(Math.max(requested * 4, 50), HYBRID_MAX_POOL) } : candidateQuery;
+        found = this.vectorBackend
+          ? await this.retrieveFromVectorBackend(queryEmbedding, pooled)
+          : await this.retrieveFromSQLFallback(queryEmbedding, pooled);
+        if (hybrid) found = await this.hybridRank([task, currentState].filter(Boolean).join('\n'), found,
+          { ...candidateQuery, rerank }, queryEmbedding);
       }
-    }
-
-    // Cache and return results
+      return neural && query.minSimilarity !== undefined ? found.filter(episode => (episode.similarity ?? 0) >= query.minSimilarity!) : found;
+    };
+    const episodes = await retrieve(retrievalQuery);
+    if (neural) return this.applyNeuralRanking(episodes, neural, k,
+      retrievalQuery === query ? undefined : () => retrieve(query));
+    // Cache and return results; neural queries always read current model state.
     this.queryCache.set(cacheKey, episodes);
     return episodes;
+  }
+
+  private async applyNeuralRanking(episodes: EpisodeWithEmbedding[], neural: NeuralRerankQuery, k: number, fallback?: () => Promise<EpisodeWithEmbedding[]>): Promise<EpisodeWithEmbedding[]> {
+    const mode = neural.mode ?? 'shadow';
+    const annotate = (items: EpisodeWithEmbedding[], status: NonNullable<EpisodeWithEmbedding['neuralRerank']>['status'],
+      details: Partial<NonNullable<EpisodeWithEmbedding['neuralRerank']>> = {}, scores = new Map<string, number>()) =>
+      items.slice(0, k).map(episode => ({ ...episode, neuralRerank: { mode, status, ...details,
+        ...(scores.has(String(episode.id)) ? { score: scores.get(String(episode.id))! } : {}) } }));
+    if (this.graphBackend) return annotate(episodes, 'unsupported');
+    if (!this.neuralReranker) return annotate(episodes, 'unavailable');
+    try {
+      // One frozen time reference for all candidate features in this request.
+      const nowSeconds = Date.now() / 1000;
+      const candidates = episodes.slice(0, 64).map(episode => ({ id: String(episode.id), features: episodeRerankFeatures(episode, nowSeconds) }));
+      const ranked = await this.neuralReranker.rank(neural.id, candidates, { mode,
+        ...(neural.candidateId === undefined ? {} : { candidateId: neural.candidateId }) });
+      const details = { revision: ranked.revision, modelHash: ranked.modelHash };
+      if (!ranked.available) return annotate(fallback ? await fallback() : episodes, 'unavailable', details);
+      const scores = new Map(ranked.scores.map(item => [item.id, item.score]));
+      if (mode === 'shadow') return annotate(episodes, 'scored', details, scores);
+      const byId = new Map(episodes.map(episode => [String(episode.id), episode]));
+      if (ranked.order.length !== candidates.length || new Set(ranked.order).size !== candidates.length || ranked.order.some(id => !byId.has(id)))
+        throw new Error('Neural reranker returned an invalid candidate permutation');
+      return annotate(ranked.order.map(id => byId.get(id)!), 'scored', details, scores);
+    } catch {
+      return annotate(fallback ? await fallback() : episodes, 'error');
+    }
   }
 
   /**
@@ -671,7 +752,7 @@ export class ReflexionMemory {
     }
 
     if (timeWindowDays) {
-      filters.push('e.ts > strftime("%s", "now") - ?');
+      filters.push("e.ts > strftime('%s', 'now') - ?");
       params.push(timeWindowDays * 86400);
     }
 

@@ -103,3 +103,5 @@ export type {
 export * from './FannModels.js';
 
 export * from './WeightPrograms.js';
+
+export * from './NeuralReranker.js';

@@ -9,9 +9,28 @@ const sha256 = path => createHash('sha256').update(readFileSync(path)).digest('h
 if (run('git', ['status', '--porcelain'])) throw new Error('Source must be clean');
 const sourceSha = run('git', ['rev-parse', 'HEAD']);
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
-if (pkg.name !== 'agentdb' || pkg.version !== '3.9.0' || pkg.dependencies['ruv-fann'] !== '0.1.2' || pkg.dependencies['ruv-fann-wsp'] !== '0.1.0') throw new Error('Unexpected release identity');
+if (pkg.name !== 'agentdb' || pkg.version !== '3.10.0' || pkg.dependencies['ruv-fann'] !== '0.1.2' || pkg.dependencies['ruv-fann-wsp'] !== '0.1.0') throw new Error('Unexpected release identity');
 const tests = JSON.parse(readFileSync('/tmp/fann-release-tests.json', 'utf8'));
 if (!tests.success || tests.numPassedTests < 1 || tests.numPassedTests !== tests.numTotalTests || tests.numPendingTests || tests.numTodoTests) throw new Error('Nonzero no-skip test evidence required');
+const rerankReportPath = '/tmp/neural-rerank-evaluation.json';
+const rerankReportBytes = readFileSync(rerankReportPath);
+const rerank = JSON.parse(rerankReportBytes);
+const requiredRerankChecks = ['heldoutQueryIdsDisjoint', 'shadowPreservesOrder', 'promotionChangesOrder', 'rollbackRestoresBaseline', 'deterministicTieOrder', 'finiteScores', 'rejectedEvaluationCannotPromote', 'gradientFreePatchCandidate'];
+if (rerank.schema !== 'agentdb.neural-rerank-eval/1' || rerank.status !== 'passed' || rerank.dataset !== 'synthetic-v1' || rerank.sourceSha !== sourceSha ||
+    !Number.isInteger(rerank.trainingQueries) || rerank.trainingQueries < 1 || !Number.isInteger(rerank.validationQueries) || rerank.validationQueries < 1 || !Number.isInteger(rerank.heldoutQueries) || rerank.heldoutQueries < 5 ||
+    !Number.isFinite(rerank.baseline?.ndcg) || rerank.baseline.ndcg < 0 || rerank.baseline.ndcg > 1 || !Number.isFinite(rerank.baseline?.mrr) || rerank.baseline.mrr < 0 || rerank.baseline.mrr > 1 ||
+    !Number.isFinite(rerank.candidate?.ndcg) || rerank.candidate.ndcg < 0 || rerank.candidate.ndcg > 1 || !Number.isFinite(rerank.candidate?.mrr) || rerank.candidate.mrr < 0 || rerank.candidate.mrr > 1 ||
+    !(rerank.candidate.ndcg > rerank.baseline.ndcg) || rerank.candidate.mrr < rerank.baseline.mrr || !Number.isFinite(rerank.improvement) || !(rerank.improvement > 0) ||
+    Math.abs(rerank.improvement - (rerank.candidate.ndcg - rerank.baseline.ndcg)) > 1e-12 ||
+    requiredRerankChecks.some(key => rerank.checks?.[key] !== true) || Object.values(rerank.checks ?? {}).some(value => value !== true))
+  throw new Error('Exact-source held-out reranker report must show positive NDCG lift and all required checks passing');
+if (rerank.weightPatch?.method !== 'Predetermined tanh(reward) toy scorer; no training' || rerank.weightPatch.edits !== 49 ||
+    !Number.isFinite(rerank.weightPatch.baseline?.ndcg) || rerank.weightPatch.baseline.ndcg < 0 || rerank.weightPatch.baseline.ndcg > 1 ||
+    !Number.isFinite(rerank.weightPatch.baseline?.mrr) || rerank.weightPatch.baseline.mrr < 0 || rerank.weightPatch.baseline.mrr > 1 ||
+    !Number.isFinite(rerank.weightPatch.candidate?.ndcg) || rerank.weightPatch.candidate.ndcg < 0 || rerank.weightPatch.candidate.ndcg > 1 ||
+    !Number.isFinite(rerank.weightPatch.candidate?.mrr) || rerank.weightPatch.candidate.mrr < 0 || rerank.weightPatch.candidate.mrr > 1 ||
+    !(rerank.weightPatch.candidate.ndcg > rerank.weightPatch.baseline.ndcg) || rerank.weightPatch.candidate.mrr < rerank.weightPatch.baseline.mrr)
+  throw new Error('Exact-source gradient-free WSP evaluation must show bounded positive NDCG lift and no MRR regression');
 const packed = JSON.parse(run('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', out]));
 if (packed.length !== 1) throw new Error('Expected one archive');
 const filename = packed[0].filename;
@@ -24,7 +43,10 @@ try {
   console.log(run(process.execPath, [resolve('scripts/fann-packed-consumer.mjs')], consumer));
 } finally { rmSync(consumer, { recursive: true, force: true }); }
 if (sha256(tarball) !== digest) throw new Error('Consumer archive changed');
-const seal = { schema: 'agentdb.neural-release/1', sourceSha, name: pkg.name, version: pkg.version, releaseTag: 'v3.9.0', filename, sha256: digest, qualification: { packedConsumer: 'passed', node: process.version, testsPassed: tests.numPassedTests, testReportSha256: sha256('/tmp/fann-release-tests.json') } };
+const seal = { schema: 'agentdb.neural-release/1', sourceSha, name: pkg.name, version: pkg.version, releaseTag: 'v3.10.0', filename, sha256: digest,
+  qualification: { packedConsumer: 'passed', node: process.version, testsPassed: tests.numPassedTests, testReportSha256: sha256('/tmp/fann-release-tests.json'),
+    neuralRerankEvaluationSha256: createHash('sha256').update(rerankReportBytes).digest('hex'), neuralRerankEvaluation: rerank } };
 writeFileSync(join(out, 'candidate-seal.json'), JSON.stringify(seal, null, 2) + '\n', { flag: 'wx' });
 writeFileSync(join(out, 'library-tests.json'), readFileSync('/tmp/fann-release-tests.json'), { flag: 'wx' });
+writeFileSync(join(out, 'neural-rerank-evaluation.json'), rerankReportBytes, { flag: 'wx' });
 console.log(JSON.stringify(seal));

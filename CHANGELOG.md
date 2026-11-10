@@ -5,6 +5,21 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.0] - 2026-11-10
+
+### Added
+
+- `NeuralReranker`: deterministic small-network WASM training, immutable candidates, grouped NDCG/MRR evaluation against baseline and active models, internally authorized promotion and verified checkpoint rollback.
+- Optional episode `neuralRerank` scoring with default shadow behavior, bounded active reranking, preserved filters and explicit fallback diagnostics. Four versioned numeric features keep relevance judgments out of inference inputs.
+- Direct WSP inspection and hash-bound weight-patch candidates share the ranking evaluation gates, retain training-query provenance, and require explicit promotion.
+- Ten strict MCP tools for reranker management and scoring; promotion and rollback require admin or an explicit allow.
+- A deterministic synthetic train/validation/held-out evaluation report, bound to the exact release candidate. Real WASM, both SQLite drivers, MCP stdio and installed consumers exercise the lifecycle. Synthetic improvements are not production relevance claims.
+
+### Fixed
+
+- Episode time-window SQL uses SQLite string literals compatible with native SQLite configurations that disable double-quoted string literals.
+- Fresh MCP databases and administrative resets initialize the canonical episode schema even when the development-relative SQL files are absent from an installed package.
+
 ## [3.9.0] - 2026-11-10
 
 ### Added
