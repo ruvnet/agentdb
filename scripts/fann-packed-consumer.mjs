@@ -10,7 +10,7 @@ const require = createRequire(resolve(process.cwd(), 'package.json'));
 const { FannModels } = await import(pathToFileURL(require.resolve('agentdb/controllers/FannModels')).href);
 const { createDatabase } = await import(pathToFileURL(require.resolve('agentdb/db-fallback')).href);
 const pkg = require('agentdb/package.json');
-assert.equal(pkg.version, '3.8.1');
+assert.equal(pkg.version, '3.8.2');
 assert.equal(pkg.dependencies['ruv-fann'], '0.1.0');
 process.env.AGENTDB_FORCE_SQLJS = '1';
 const dir = mkdtempSync(join(tmpdir(), 'agentdb-packed-fann-'));
@@ -36,7 +36,7 @@ try {
 } finally { models?.dispose(); db?.close(); rmSync(dir, { recursive: true, force: true }); }
 
 const cli = require.resolve('agentdb/cli');
-assert.equal(execFileSync(process.execPath, [cli, '--version'], { encoding: 'utf8' }).trim(), 'agentdb v3.8.1');
+assert.equal(execFileSync(process.execPath, [cli, '--version'], { encoding: 'utf8' }).trim(), 'agentdb v3.8.2');
 execFileSync(process.execPath, [fileURLToPath(new URL('../tests/mcp-fann-e2e.mjs', import.meta.url))], {
   cwd: process.cwd(), stdio: 'inherit', timeout: 120000,
   env: { ...process.env, AGENTDB_TEST_CLI: cli, AGENTDB_TEST_DRIVERS: 'sqljs' },

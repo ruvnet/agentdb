@@ -5,6 +5,17 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.2] - 2026-11-10
+
+### Changed
+
+- **Exact pins replace the remaining ruvector `^0.1.x` ranges:** `@ruvector/rvf-wasm` 0.1.13 (was ^0.1.7), `@ruvector/rvf-solver` 0.1.11 (was ^0.1.7) and `@ruvector/rabitq-wasm` 0.1.2 (was ^0.1.2). Each is the latest published version. All three stay optional and lazily imported, with their fallbacks unchanged. A new test covers each through the path agentdb uses: rvf-wasm `init()` resolves to the RVF exports, `AgentDBSolver.create()` runs on rvf-solver, and `loadRabitq()` returns `RabitqIndex.build` from the rabitq-wasm node entry.
+
+### Fixed
+
+- **CLI write commands exited 1 after a successful write on native SQLite.** `reflexion store`, `skill create`, `skill consolidate`, `causal experiment create` and `causal experiment add-observation` called `this.db.save()`, which only the sql.js wrapper has. With better-sqlite3 (used when it loads since 3.7.7), the row was written, then the command printed `this.db.save is not a function` and exited 1. `save()` is now called only when it exists, as the CLI's shutdown path already did.
+- **README Quick Start runs as written.** Path A imported `SelfLearningRvfBackend` from the package root, which does not export it, and used an undefined `queryEmbedding`. It now imports from `agentdb/backends/self-learning` and sets `dimension: 384`. Path B used `add` and `search` commands that don't exist. It now uses `init`, `reflexion store` and `reflexion retrieve`. `tests/unit/readme-quickstart.test.ts` pulls both paths out of README.md and runs them against the build.
+
 ## [3.8.1] - 2026-11-10
 
 ### Fixed
