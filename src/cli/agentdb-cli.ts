@@ -261,7 +261,7 @@ class AgentDBCLI {
     log.info('Use `agentdb causal experiment add-observation` to record data');
 
     // Save database to persist experiment
-    this.db.save();
+    if (typeof this.db.save === 'function') this.db.save(); // sql.js only; native better-sqlite3 persists on write
   }
 
   async causalExperimentAddObservation(params: {
@@ -294,7 +294,7 @@ class AgentDBCLI {
     });
 
     // Save database to persist changes
-    this.db.save();
+    if (typeof this.db.save === 'function') this.db.save(); // sql.js only; native better-sqlite3 persists on write
 
     log.success(`Recorded ${params.isTreatment ? 'treatment' : 'control'} observation: ${params.outcome}`);
   }
@@ -507,7 +507,7 @@ class AgentDBCLI {
     const episodeId = await this.reflexion.storeEpisode(params as Episode);
 
     // Save database to persist changes
-    this.db.save();
+    if (typeof this.db.save === 'function') this.db.save(); // sql.js only; native better-sqlite3 persists on write
 
     log.success(`Stored episode #${episodeId}`);
     if (params.critique) {
@@ -694,7 +694,7 @@ class AgentDBCLI {
     });
 
     // Save database to persist changes
-    this.db.save();
+    if (typeof this.db.save === 'function') this.db.save(); // sql.js only; native better-sqlite3 persists on write
 
     log.success(`Created skill #${skillId}`);
   }
@@ -759,7 +759,7 @@ class AgentDBCLI {
     });
 
     // Save database to persist changes
-    this.db.save();
+    if (typeof this.db.save === 'function') this.db.save(); // sql.js only; native better-sqlite3 persists on write
 
     const duration = Date.now() - startTime;
 

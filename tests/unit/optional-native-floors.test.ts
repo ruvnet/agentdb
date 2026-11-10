@@ -29,6 +29,10 @@ const FLOORS: Record<string, string> = {
   '@ruvector/rvf': '0.4.12',
   '@ruvector/rvf-node': '0.4.7',
   ruvector: '0.3.20',
+  // 3.8.2: exact pins instead of ^0.1.x ranges
+  '@ruvector/rvf-wasm': '0.1.13',
+  '@ruvector/rvf-solver': '0.1.11',
+  '@ruvector/rabitq-wasm': '0.1.2',
 };
 
 function installedVersion(name: string): string | null {
@@ -112,5 +116,30 @@ describe('AttentionService WASM path in Node (ruvector-attention-wasm 2.x)', () 
       expect(out.length).toBe(dim);
       expect(Array.from(out).every(Number.isFinite)).toBe(true);
     }
+  });
+});
+
+describe('pinned WASM edges load through the paths agentdb uses (3.8.2)', () => {
+  it('@ruvector/rvf-wasm init() resolves to the raw RVF exports', async () => {
+    if (installedVersion('@ruvector/rvf-wasm') === null) return;
+    const mod: any = await import('@ruvector/rvf-wasm');
+    expect(typeof mod.default).toBe('function');
+    const exportsObj = await mod.default();
+    expect(typeof exportsObj.rvf_crc32c).toBe('function');
+    expect(typeof exportsObj.rvf_witness_verify).toBe('function');
+  });
+
+  it('@ruvector/rvf-solver backs AgentDBSolver', async () => {
+    if (installedVersion('@ruvector/rvf-solver') === null) return;
+    const { AgentDBSolver } = await import('../../src/backends/rvf/RvfSolver.js');
+    expect(await AgentDBSolver.isAvailable()).toBe(true);
+    expect(await AgentDBSolver.create()).toBeTruthy();
+  });
+
+  it('@ruvector/rabitq-wasm node entry backs loadRabitq()', async () => {
+    if (installedVersion('@ruvector/rabitq-wasm') === null) return;
+    const { loadRabitq } = await import('../../src/backends/rvf/RabitqAccelerator.js');
+    const RabitqIndex: any = await loadRabitq();
+    expect(typeof RabitqIndex?.build).toBe('function');
   });
 });

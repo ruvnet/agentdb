@@ -80,25 +80,28 @@ npm install agentdb
 ```
 
 ```typescript
-import { SelfLearningRvfBackend } from 'agentdb';
+import { SelfLearningRvfBackend } from 'agentdb/backends/self-learning';
 
 const db = await SelfLearningRvfBackend.create({
+  dimension: 384,
   learning: true,
   storagePath: './memory.rvf',
 });
 
-await db.insertAsync('doc1', new Float32Array(384), { text: 'Hello world' });
-const hits = await db.searchAsync(queryEmbedding, 5);
+// Use your embedding model here; any 384-dim Float32Array works.
+const embedding = Float32Array.from({ length: 384 }, (_, i) => Math.sin(i));
+await db.insertAsync('doc1', embedding, { text: 'Hello world' });
+const hits = await db.searchAsync(embedding, 5);
 db.recordFeedback(hits[0].id, 1.0);  // it was useful — db gets smarter
 ```
 
 ### Path B — CLI in 10 seconds
 
 ```bash
-# Try it without installing
-npx agentdb init my-memory.rvf
-npx agentdb add my-memory.rvf "vector memory that learns"
-npx agentdb search my-memory.rvf "self-improving search" --top-k 5
+# Try it without installing (creates ./agentdb.db)
+npx agentdb init
+npx agentdb reflexion store "session-1" "implement_auth" 0.95 true "Used OAuth2 with PKCE"
+npx agentdb reflexion retrieve "authentication" --k 5
 ```
 
 ### Path C — MCP server (Claude Code, Cursor, etc.)
