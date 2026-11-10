@@ -5,6 +5,36 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.1] - 2026-11-10
+
+### Fixed
+
+- **Pi 4 / Cortex-A72 crash floors.** The optional native packages are raised to the first builds whose linux-arm64 binaries contain no `LDAPR` instructions (an ARMv8.3 instruction that Cortex-A72, the Raspberry Pi 4 CPU, does not have). A SIGILL kills the process, so agentdb's `try { await import() }` fallbacks cannot catch it. The old floors still let a lockfile, an offline cache or a parent package's pin resolve the crashing builds. This repo's own lockfile had resolved `@ruvector/attention` 2.2.3 and `@ruvector/core` 0.1.30. A fresh install of 3.8.0 already picked up the fixed builds through its ranges. Measured on a `npm install --cpu=arm64 --os=linux` tree, loading each package with node 22 arm64 under `qemu-aarch64 -cpu cortex-a72`:
+
+  | package | old floor | LDAPR | load on A72 | new floor | LDAPR | load on A72 |
+  |---|---|---|---|---|---|---|
+  | `@ruvector/attention` | 2.2.3 | 305 | SIGILL | ^2.3.1 | 0 | ok |
+  | `@ruvector/graph-node` | 2.1.2 | 2464 | SIGILL | ^2.1.4 | 0 | ok |
+  | `@ruvector/rvf-node` | 0.4.5 | 100 | SIGILL | 0.4.7 | 0 | ok |
+  | `@ruvector/sona` | 0.1.11 | 34 | SIGILL | 0.1.13 | 0 | ok |
+  | `@ruvector/gnn` | 0.1.23 | no arm64 binary | not found | 0.1.28 | 0 | ok |
+  | `@ruvector/router` | 0.1.15 | no arm64 binary | not found | 0.1.34 | 0 | ok |
+  | `@ruvector/ruvllm` | 4.1.0 | 0 | ok | ^4.2.2 | 0 | ok |
+  | `@ruvector/rvf` | 0.4.10 | (JS, uses rvf-node) | | 0.4.12 | | |
+  | `ruvector` | 0.3.5 | | | 0.3.20 | | |
+
+- **`@ruvector/core` 0.1.38 is now declared** (optional). agentdb imports it directly in the backend factory, detector, `RuVectorBackend` and `NativeAccelerator`, but only got it through `ruvector`, whose range (`^0.1.36`) still admits builds before 0.1.38. 0.1.38 stops re-inserted ids from returning ghost HNSW results and rejects NaN/Inf vectors.
+- **The WASM attention fallback now loads in Node.** `ruvector-attention-wasm` is a wasm-bindgen web build, and its default init `fetch()`es a `file://` URL, which Node rejects ("fetch failed"). So `AttentionService` never used WASM in Node, on 0.1.32 or 2.x. Under Node it now reads the `.wasm` bytes and calls `initSync`. Browsers keep the default init.
+
+### Changed
+
+- **`ruvector-attention-wasm` ^0.1.32 → ^2.1.0.** A `^0.1.x` range never reached the 2.x line. The three classes agentdb constructs (`WasmFlashAttention(dim, blockSize)`, `WasmHyperbolicAttention(dim, curvature)`, `WasmMoEAttention(dim, experts, topK)`) and their `compute(query, keys, values)` signatures are unchanged. Speed is about the same (dim 64, 32 keys, 2,000 calls, per call, 0.1.32 vs 2.1.0): flash 342 vs 313 us, hyperbolic 800 vs 761 us, MoE 322 vs 307 us. That is within run-to-run noise, so this release makes no performance claim.
+- The 0.x edges (`@ruvector/core`, `gnn`, `router`, `sona`, `rvf`, `rvf-node`, `ruvector`) are exact pins instead of `^0.x` ranges, as `ruv-fann` already was. `@ruvector/attention`, `graph-node`, `ruvllm` and `ruvector-attention-wasm` use caret ranges on their major. All of these stay optional.
+
+### Tests
+
+- `tests/unit/optional-native-floors.test.ts` (in the release test list): checks each declared floor; checks that each installed package satisfies its floor and imports; with the NAPI binding unavailable, `AttentionService.flashAttention` runs on the `wasm` backend (this fails on 3.8.0's loader); and checks that the Flash, Hyperbolic and MoE WASM classes compute finite output.
+
 ## [3.7.7] - 2026-11-09
 
 ### Fixed

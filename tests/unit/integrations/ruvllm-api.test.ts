@@ -55,14 +55,14 @@ function parse(v: string): [number, number, number] {
 }
 
 describe('@ruvector/ruvllm version', () => {
-  it('declares ^4.1.0', () => {
-    expect(declared).toBe('^4.1.0');
+  it('declares ^4.2.2 (linux-arm64 build without LDAPR)', () => {
+    expect(declared).toBe('^4.2.2');
   });
 
-  it('installed version satisfies ^4.1.0 (never the 4.0.x wrong-repo publish)', () => {
+  it('installed version satisfies ^4.2.2 (never the 4.0.x wrong-repo publish)', () => {
     const [major, minor] = parse(installed);
     expect(major).toBe(4);
-    expect(minor).toBeGreaterThanOrEqual(1);
+    expect(minor).toBeGreaterThanOrEqual(2);
   });
 });
 

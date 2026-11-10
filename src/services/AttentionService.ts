@@ -65,6 +65,22 @@ let wasmLoadAttempted = false;
 let napiLoadAttempted = false;
 
 /**
+ * Read ruvector-attention-wasm's .wasm bytes when running under Node.
+ * Returns null in browsers or if the file cannot be located.
+ */
+async function readNodeWasmBytes(): Promise<Uint8Array | null> {
+  if (typeof process === 'undefined' || !process.versions?.node) return null;
+  try {
+    const { createRequire } = await import('module');
+    const { readFileSync } = await import('fs');
+    const req = createRequire(import.meta.url);
+    return readFileSync(req.resolve('ruvector-attention-wasm/ruvector_attention_wasm_bg.wasm'));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Attempt to load the ruvector-attention-wasm module
  */
 async function loadWasmModule(): Promise<boolean> {
@@ -74,8 +90,13 @@ async function loadWasmModule(): Promise<boolean> {
   try {
     // Dynamic import for WASM module
     const wasm = await import('ruvector-attention-wasm');
-    if (wasm.default) {
-      await wasm.default(); // Initialize WASM
+    const bytes = await readNodeWasmBytes();
+    if (bytes && typeof wasm.initSync === 'function') {
+      // Node: the package is a wasm-bindgen "web" build whose default init
+      // fetch()es a file:// URL, which Node rejects ("fetch failed").
+      wasm.initSync({ module: bytes });
+    } else if (wasm.default) {
+      await wasm.default(); // Initialize WASM (browser)
     } else if (wasm.init) {
       wasm.init();
     }
