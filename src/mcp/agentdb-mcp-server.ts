@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { WeightPrograms } from '../controllers/WeightPrograms.js';
+import { WSP_TOOLS, isWspTool, dispatchWspTool } from './wsp-tools.js';
 import { FannModels } from '../controllers/FannModels.js';
 import { FANN_TOOLS, isFannTool, dispatchFannTool } from './fann-tools.js';
 /**
@@ -310,6 +312,7 @@ const skills = new SkillLibrary(db, embeddingService);
 const causalRecall = new CausalRecall(db, embeddingService);
 const learner = new NightlyLearner(db, embeddingService);
 let fannModels = new FannModels(db);
+let weightPrograms = new WeightPrograms(db);
 const learningSystem = new LearningSystem(db, embeddingService);
 const batchOps = new BatchOperations(db, embeddingService);
 const reasoningBank = new ReasoningBank(db, embeddingService);
@@ -346,6 +349,11 @@ async function describeCapabilities(): Promise<Record<string, unknown>> {
         : DEFAULT_EXACT_SEARCH_THRESHOLD,
       patternRerankWeights: DEFAULT_RERANK_WEIGHTS,
     },
+    weightPrograms: {
+      runtime: 'ruv-fann-wsp', persistence: 'sqlite-checkpoints-and-proposals', gradients: false, provider: null,
+      datasetSource: 'caller-supplied', maxProposals: 16, maxHistory: 32, proposalMaxAgeHours: 24,
+      tools: WSP_TOOLS.map(tool => tool.name).filter(name => isMcpToolAllowed(name, toolPolicy)),
+    },
     neuralModels: {
       runtime: 'ruv-fann', initialization: 'lazy', persistence: 'sqlite-checkpoints',
       trainingActivations: ['Linear', 'Sigmoid', 'SigmoidSymmetric', 'Tanh', 'ReLU'],
@@ -363,7 +371,7 @@ async function describeCapabilities(): Promise<Record<string, unknown>> {
 const server = new Server(
   {
     name: 'agentdb',
-    version: '3.8.2',
+    version: '3.9.0',
   },
   {
     capabilities: {
@@ -377,6 +385,7 @@ const server = new Server(
 // ============================================================================
 const tools = [
   ...FANN_TOOLS,
+  ...WSP_TOOLS,
   // ==========================================================================
   // CORE VECTOR DB OPERATIONS (NEW)
   // ==========================================================================
@@ -1349,6 +1358,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (!isMcpToolAllowed(name, toolPolicy)) {
       throw new Error(`MCP tool "${name}" is not permitted by the active AgentDB capability policy`);
     }
+    if (isWspTool(name)) {
+      const result = await dispatchWspTool(weightPrograms, name, args);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
     if (isFannTool(name)) {
       const result = await dispatchFannTool(fannModels, name, args);
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
@@ -1362,7 +1375,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (args?.reset === true) {
           resetDatabaseTables(db);
           fannModels.dispose();
+          weightPrograms.dispose();
           fannModels = new FannModels(db);
+          weightPrograms = new WeightPrograms(db);
         }
 
         // Initialize schema
@@ -2931,6 +2946,7 @@ async function main() {
     clearInterval(autoSaveInterval);
 
     fannModels.dispose();
+    weightPrograms.dispose();
     let persistenceFailed = false;
 
     // Save database before exit

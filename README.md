@@ -373,10 +373,18 @@ Built by [rUv](https://ruv.io) · [ruv.io](https://ruv.io) · [Source](https://g
 
 ### Persisted neural models (3.8)
 
+`WeightPrograms` from `agentdb/controllers/WeightPrograms` adds durable,
+gradient-free weight patches evaluated by real WASM. Caller-authored proposals
+are persisted with evaluation evidence; explicit promotion checks stored proposal
+identity, generation, hashes and revision. Rollback restores retained checkpoints
+as new revisions. Six strict MCP tools expose the workflow with learning/admin
+permissions. Acceptance applies to caller-supplied examples and does not prove
+generalization. See [the weight programs guide](docs/neural/weight-programs.md).
+
 `FannModels` from `agentdb/controllers/FannModels` stores dense ruv-FANN
 checkpoints and revisions in your database. It provides real WASM batch inference,
 SGD/AdamW training, and bounded prepared-model caching. AgentDB depends on
-`ruv-fann@0.1.0`, which depends on `ruv-fann-wasm@0.1.0`; no optional native
+`ruv-fann@0.1.2`, which depends on `ruv-fann-wasm@0.1.2`; no optional native
 accelerator is needed for this API.
 
 Six MCP tools (`agentdb_neural_create`, `get`, `list`, `predict`, `train`, and

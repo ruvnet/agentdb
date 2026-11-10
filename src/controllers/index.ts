@@ -101,3 +101,5 @@ export type {
 } from './prerequisites.js';
 
 export * from './FannModels.js';
+
+export * from './WeightPrograms.js';

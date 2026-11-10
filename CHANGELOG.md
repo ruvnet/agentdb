@@ -5,6 +5,18 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.0] - 2026-11-10
+
+### Added
+
+- **Durable weight-space programs:** `WeightPrograms` from `agentdb/controllers/WeightPrograms` stores dense checkpoints, evaluates caller-authored weight patches with real WASM, persists internal proposal evidence, and promotes accepted proposals by ID. Model generation, base hash and revision checks protect concurrent updates and deleted/recreated programs. Rollback restores a retained checkpoint as a new revision; history retains 32 checkpoints and proposals retain at most 16 entries with a 24-hour expiry.
+- **Six MCP tools:** `agentdb_wsp_create/get/list/propose/promote/rollback` validate strict nested schemas. Reads work in readonly/retrieval profiles, creation/evaluation/promotion require learning, and rollback requires admin or an explicit allow. Returned evaluation receipts do not authorize promotion. Evaluation data is caller-supplied; acceptance does not prove unseen-data generalization. No provider or gradient training runs.
+- Real native SQLite, sql.js and stdio tests cover hand-authored XOR construction/repair, rejected proposals, mutation isolation, forged receipts, concurrent staleness, ABA, persistence, checkpoint integrity and rollback.
+
+### Changed
+
+- Exact required dependencies: `ruv-fann-wsp@0.1.0` and `ruv-fann@0.1.2`. Existing `FannModels` checkpoints and APIs remain independent. Protected packed-consumer qualification now exercises durable WSP proposals and MCP workflows alongside existing neural training.
+
 ## [3.8.2] - 2026-11-10
 
 ### Changed

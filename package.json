@@ -1,6 +1,6 @@
 {
   "name": "agentdb",
-  "version": "3.8.2",
+  "version": "3.9.0",
   "description": "Agent memory and vector database for AI agents: single-file HNSW search, episodic memory, causal graph, reinforcement learning and MCP tools.",
   "type": "module",
   "main": "dist/src/index.js",
@@ -50,7 +50,8 @@
     "./controllers/MincutService": "./dist/src/controllers/MincutService.js",
     "./services/federated-learning": "./dist/src/services/federated-learning.js",
     "./model": "./dist/src/model/ModelCacheLoader.js",
-    "./controllers/FannModels": "./dist/src/controllers/FannModels.js"
+    "./controllers/FannModels": "./dist/src/controllers/FannModels.js",
+    "./controllers/WeightPrograms": "./dist/src/controllers/WeightPrograms.js"
   },
   "scripts": {
     "build": "npm run build:ts && npm run copy:schemas && npm run build:browser",
@@ -87,7 +88,8 @@
     "test:mcp-crud": "node tests/mcp-crud-e2e.mjs",
     "benchmark:crud": "tsx benchmarks/crud-benchmark.mts",
     "benchmark:ecosystem": "tsx benchmarks/ecosystem-benchmark.mts",
-    "test:mcp-fann": "node tests/mcp-fann-e2e.mjs"
+    "test:mcp-fann": "node tests/mcp-fann-e2e.mjs",
+    "test:mcp-wsp": "node tests/mcp-wsp-e2e.mjs"
   },
   "keywords": [
     "agent-memory",
@@ -121,11 +123,12 @@
     "@modelcontextprotocol/sdk": "^1.20.1",
     "@opentelemetry/api": "^1.9.0",
     "ajv": "^8.18.0",
-    "semver": "^7.7.0",
-    "sql.js": "^1.13.0",
-    "ruv-fann": "0.1.0",
     "chalk": "^5.3.0",
-    "commander": "^12.1.0"
+    "commander": "^12.1.0",
+    "ruv-fann": "0.1.2",
+    "ruv-fann-wsp": "0.1.0",
+    "semver": "^7.7.0",
+    "sql.js": "^1.13.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
