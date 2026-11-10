@@ -8,7 +8,7 @@ const run = (cmd, args, cwd = process.cwd(), env = process.env) => execFileSync(
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const seal = JSON.parse(readFileSync(join(dir, 'candidate-seal.json'), 'utf8'));
 if (process.env.GITHUB_ACTIONS !== 'true' || process.env.GITHUB_WORKFLOW !== 'protected-release' || process.env.GITHUB_REF !== 'refs/heads/main' || process.env.GITHUB_SHA !== seal.sourceSha || process.env.EXPECTED_SHA !== seal.sourceSha || run('git', ['rev-parse', 'HEAD']) !== seal.sourceSha) throw new Error('Protected exact-main release context required');
-if (seal.schema !== 'agentdb.neural-release/1' || seal.name !== 'agentdb' || seal.version !== '3.8.0' || seal.filename !== 'agentdb-3.8.0.tgz' || seal.releaseTag !== 'v3.8.0' || seal.qualification?.packedConsumer !== 'passed') throw new Error('Invalid candidate seal');
+if (seal.schema !== 'agentdb.neural-release/1' || seal.name !== 'agentdb' || seal.version !== '3.8.1' || seal.filename !== 'agentdb-3.8.1.tgz' || seal.releaseTag !== 'v3.8.1' || seal.qualification?.packedConsumer !== 'passed') throw new Error('Invalid candidate seal');
 if (run('gh', ['api', `repos/${process.env.GITHUB_REPOSITORY}/commits/main`, '--jq', '.sha']) !== seal.sourceSha) throw new Error('Main moved after qualification');
 if (run('gh', ['issue', 'list', '--label', 'release-blocker', '--state', 'open', '--json', 'number', '--jq', 'length']) !== '0') throw new Error('Open release blockers');
 const tests = JSON.parse(readFileSync(join(dir, 'library-tests.json'), 'utf8'));
@@ -57,12 +57,12 @@ if (!await download()) {
 }
 const bytes = await waitPublic();
 writeFileSync(join(dir, 'npm-public.tgz'), bytes);
-await qualify('agentdb@3.8.0');
+await qualify('agentdb@3.8.1');
 const receipt = { schema: 'agentdb.neural-publication/1', sourceSha: seal.sourceSha, name: seal.name, version: seal.version, sha256: seal.sha256, publicConsumer: 'passed', node: process.version };
 const receiptPath = join(dir, 'publication-receipt.json');
 writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx' });
 const notes = join(dir, 'release-notes.md');
-writeFileSync(notes, 'Persist dense neural models in AgentDB with real ruv-FANN WASM inference, SGD/AdamW training, revision-safe updates, and bounded prepared-model caching. Six MCP tools enforce readonly, learning and admin policies. Includes ruv-fann@0.1.0 and ruv-fann-wasm@0.1.0.\n\nValidated exact npm archive on Node22 and Node24, 458 library tests, both SQLite MCP paths, and public-install persistence/training checks.\n');
+writeFileSync(notes, 'Raises the optional native floors to builds with 0 LDAPR instructions on linux-arm64 (older @ruvector/attention, graph-node, rvf-node and sona builds SIGILL on Cortex-A72 / Raspberry Pi 4), moves ruvector-attention-wasm to the 2.x line, and makes the WASM attention fallback load in Node. See CHANGELOG.md for measurements.\n');
 function verifyTag(allowMissing = false) {
   const result = spawnSync('gh', ['api', `repos/${process.env.GITHUB_REPOSITORY}/git/ref/tags/${seal.releaseTag}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   if (result.status !== 0) {
@@ -75,7 +75,7 @@ function verifyTag(allowMissing = false) {
 }
 verifyTag(true);
 const existing = spawnSync('gh', ['release', 'view', seal.releaseTag, '--json', 'tagName'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-if (existing.status !== 0) run('gh', ['release', 'create', seal.releaseTag, tarball, join(dir, 'candidate-seal.json'), receiptPath, '--target', seal.sourceSha, '--title', 'AgentDB 3.8.0 — persisted FANN models', '--notes-file', notes]);
+if (existing.status !== 0) run('gh', ['release', 'create', seal.releaseTag, tarball, join(dir, 'candidate-seal.json'), receiptPath, '--target', seal.sourceSha, '--title', 'AgentDB 3.8.1 — Pi 4-safe native floors, Node WASM attention', '--notes-file', notes]);
 verifyTag();
 const downloaded = mkdtempSync(join(tmpdir(), 'agentdb-release-'));
 try {
