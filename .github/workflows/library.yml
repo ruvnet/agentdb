@@ -5,6 +5,8 @@ on:
     paths:
       - 'src/**'
       - 'tests/**'
+      - 'scripts/fann-*.mjs'
+      - '.github/workflows/protected-neural-release.yml'
       - '.agents/**'
       - 'plugins/*/skills/**'
       - 'package.json'
@@ -15,6 +17,8 @@ on:
     paths:
       - 'src/**'
       - 'tests/**'
+      - 'scripts/fann-*.mjs'
+      - '.github/workflows/protected-neural-release.yml'
       - '.agents/**'
       - 'plugins/*/skills/**'
       - 'package.json'
@@ -30,6 +34,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -40,15 +46,22 @@ jobs:
         # exists (GHSA-mrhx-c7xc-m3w5); that needs an aidefence release.
         run: npm audit --omit=optional --audit-level=high
       - name: Typecheck and build
-        run: npm run build:ts && npm run copy:schemas
+        run: npm run build
       - name: CRUD, hybrid retrieval, ecosystem integration (incl. ruvllm API contract), graph, attention validation and RVF flush unit tests
-        run: npx vitest run tests/unit/controllers/fann-models.test.ts tests/mcp-policy.test.ts tests/unit/controllers/crud-adr017.test.ts tests/unit/controllers/ReflexionMemory-hybrid.test.ts tests/unit/controllers/episode-rerank.test.ts tests/unit/search tests/unit/integrations tests/unit/controllers/MincutService.test.ts tests/unit/sparsification.test.ts tests/unit/node-runtime-floor.test.ts tests/better-sqlite3-statement-gc.test.ts tests/backends/federated-session.test.ts tests/backends/federated-coordinator-args.test.ts tests/unit/attention-edge-cases.test.ts tests/backends/rvf-flush-retry.test.ts tests/backends/rvf-backend-extended.test.ts tests/backends/rvf-04-metadata.test.ts tests/backends/rvf-absent-fallback.test.ts tests/backends/rvf-in-memory.test.ts tests/backends/rvf-049-upsert-lock.test.ts tests/db-fallback-native.test.ts
+        run: npx vitest run tests/unit/controllers/fann-models.test.ts tests/mcp-policy.test.ts tests/unit/controllers/crud-adr017.test.ts tests/unit/controllers/ReflexionMemory-hybrid.test.ts tests/unit/controllers/episode-rerank.test.ts tests/unit/search tests/unit/integrations tests/unit/controllers/MincutService.test.ts tests/unit/sparsification.test.ts tests/unit/node-runtime-floor.test.ts tests/better-sqlite3-statement-gc.test.ts tests/backends/federated-session.test.ts tests/backends/federated-coordinator-args.test.ts tests/unit/attention-edge-cases.test.ts tests/backends/rvf-flush-retry.test.ts tests/backends/rvf-backend-extended.test.ts tests/backends/rvf-04-metadata.test.ts tests/backends/rvf-absent-fallback.test.ts tests/backends/rvf-in-memory.test.ts tests/backends/rvf-049-upsert-lock.test.ts tests/db-fallback-native.test.ts --reporter=json --outputFile=/tmp/fann-release-tests.json
       - name: Neural MCP training and persistence
         run: npm run test:mcp-fann
       - name: MCP stdio purity
         run: npm run test:mcp-stdio
       - name: MCP CRUD end-to-end (sql.js and better-sqlite3)
         run: npm run test:mcp-crud
+      - name: Pack once and qualify exact consumer bytes
+        run: node scripts/fann-release-pack.mjs "$RUNNER_TEMP/candidate"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentdb-neural-candidate-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/candidate/
+          if-no-files-found: error
 
   build-without-optional-deps:
     # Optional dependencies may fail to install on a consumer's platform; the
@@ -57,6 +70,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
