@@ -1360,8 +1360,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'agentdb_init': {
         // Only ever the open database: a caller-supplied path is never touched
         if (args?.reset === true) {
-          fannModels.dispose();
           resetDatabaseTables(db);
+          fannModels.dispose();
           fannModels = new FannModels(db);
         }
 
