@@ -8,6 +8,7 @@ on:
         type: string
 permissions:
   contents: read
+  issues: read
 concurrency:
   group: agentdb-neural-release
   cancel-in-progress: false
@@ -50,6 +51,7 @@ jobs:
     environment: npm-release
     permissions:
       contents: write
+      issues: read
       id-token: write
     steps:
       - uses: actions/checkout@v4
