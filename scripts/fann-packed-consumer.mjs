@@ -12,7 +12,7 @@ const { FannModels } = await import(pathToFileURL(require.resolve('agentdb/contr
 const { NeuralReranker } = await import(pathToFileURL(require.resolve('agentdb/controllers/NeuralReranker')).href);
 const { createDatabase } = await import(pathToFileURL(require.resolve('agentdb/db-fallback')).href);
 const pkg = require('agentdb/package.json');
-assert.equal(pkg.version, '3.10.0');
+assert.equal(pkg.version, '3.10.1');
 assert.equal(pkg.dependencies['ruv-fann'], '0.1.2');
 assert.equal(pkg.dependencies['ruv-fann-wsp'], '0.1.0');
 const typeFixture = join(process.cwd(), 'neural-reranker-types.mts');
@@ -197,7 +197,7 @@ try {
 } finally { programs?.dispose(); programDb?.close(); rmSync(wspDir, { recursive: true, force: true }); }
 
 const cli = require.resolve('agentdb/cli');
-assert.equal(execFileSync(process.execPath, [cli, '--version'], { encoding: 'utf8' }).trim(), 'agentdb v3.10.0');
+assert.equal(execFileSync(process.execPath, [cli, '--version'], { encoding: 'utf8' }).trim(), 'agentdb v3.10.1');
 execFileSync(process.execPath, [fileURLToPath(new URL('../tests/mcp-fann-e2e.mjs', import.meta.url))], {
   cwd: process.cwd(), stdio: 'inherit', timeout: 120000,
   env: { ...process.env, AGENTDB_TEST_CLI: cli, AGENTDB_TEST_DRIVERS: 'sqljs' },

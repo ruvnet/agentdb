@@ -1,7 +1,6 @@
 # AgentDB v2.0.0-alpha.1 - Docker Compose Configuration
 # Orchestrates multi-stage testing and validation
 
-version: '3.8'
 
 services:
   # =============================================================================
@@ -9,8 +8,8 @@ services:
   # =============================================================================
   agentdb-test:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile.root
       target: test
     container_name: agentdb-test
     volumes:
@@ -26,8 +25,8 @@ services:
   # =============================================================================
   agentdb-package:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile.root
       target: package-test
     container_name: agentdb-package
     volumes:
@@ -40,23 +39,23 @@ services:
   # =============================================================================
   agentdb-cli:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile.root
       target: cli-test
     container_name: agentdb-cli
     volumes:
       - cli-data:/tmp
     environment:
       - NODE_ENV=production
-    command: node dist/cli/agentdb-cli.js --help
+    command: node dist/src/cli/agentdb-cli.js --help
 
   # =============================================================================
   # MCP Server Validation Service
   # =============================================================================
   agentdb-mcp:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile.root
       target: mcp-test
     container_name: agentdb-mcp
     ports:
@@ -69,8 +68,8 @@ services:
   # =============================================================================
   agentdb-production:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile.root
       target: production
     container_name: agentdb-production
     volumes:
@@ -93,8 +92,8 @@ services:
   # =============================================================================
   agentdb-report:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile.root
       target: test-report
     container_name: agentdb-report
     volumes:

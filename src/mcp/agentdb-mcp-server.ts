@@ -378,7 +378,7 @@ async function describeCapabilities(): Promise<Record<string, unknown>> {
 const server = new Server(
   {
     name: 'agentdb',
-    version: '3.10.0',
+    version: '3.10.1',
   },
   {
     capabilities: {

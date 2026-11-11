@@ -1,6 +1,6 @@
 {
   "name": "agentdb",
-  "version": "3.10.0",
+  "version": "3.10.1",
   "description": "Agent memory and vector database for AI agents: single-file HNSW search, episodic memory, causal graph, reinforcement learning and MCP tools.",
   "type": "module",
   "main": "dist/src/index.js",
@@ -182,7 +182,7 @@
     "hnswlib-node": "^3.0.0",
     "inquirer": "^9.3.8",
     "ruvector": "0.3.20",
-    "ruvector-attention-wasm": "^2.1.0",
+    "ruvector-attention-wasm": "2.1.0",
     "ruvector-graph-transformer-wasm": "^2.0.4"
   },
   "overrides": {

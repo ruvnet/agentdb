@@ -26,7 +26,10 @@ closeRvfBackendsAfterEach();
 
 const D = 384;
 let seed = 12345;
-const rnd = () => (seed = (seed * 1103515245 + 12345) >>> 0) / 2 ** 32 - 0.5;
+// 32-bit LCG via Math.imul. The product seed * 1103515245 overflows 2^53 in
+// a double, so the old (seed * a + c) >>> 0 cycled after a few thousand draws
+// and filled the 3,000 x 384 set with exact duplicates.
+const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 2 ** 32 - 0.5;
 function unit(): Float32Array {
   const v = new Float32Array(D);
   let s = 0;

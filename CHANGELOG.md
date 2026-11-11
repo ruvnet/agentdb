@@ -5,6 +5,18 @@ All notable changes to AgentDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.1] - 2026-11-11
+
+### Fixed
+
+- `agentdb migrate <legacy.db> --target <new.db>` failed with "no such table: episodes" from the installed package: it read the schema from `dist/src/schemas/`, which the package does not ship. It now uses the schemas inlined at build time.
+- Docker: `docker/Dockerfile.root` ran the CLI from `dist/cli/` (it is `dist/src/cli/`), so the production image's default command failed; `docker/docker-compose.yml` pointed at a missing `Dockerfile`.
+- Tests (#45): the specification-tools suite gives its 1,000+ episode tests a 5-minute timeout and gates absolute speed checks behind `SPEED_GATES`; a regression test keeps several native semantic routers in one process without a `./vectors.db` lock (fixed by the `@ruvector/router` 0.1.34 floor in 3.8.1).
+
+### Changed
+
+- `ruvector-attention-wasm` is pinned to exactly 2.1.0.
+
 ## [3.10.0] - 2026-11-10
 
 ### Added

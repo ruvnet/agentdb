@@ -18,7 +18,7 @@ const require = createRequire(import.meta.url);
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 
 const FLOORS: Record<string, string> = {
-  'ruvector-attention-wasm': '^2.1.0',
+  'ruvector-attention-wasm': '2.1.0',
   '@ruvector/attention': '^2.3.1',
   '@ruvector/graph-node': '^2.1.4',
   '@ruvector/ruvllm': '^4.2.2',

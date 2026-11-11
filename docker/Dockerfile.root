@@ -96,12 +96,12 @@ RUN mkdir -p /tmp/test-install && \
 FROM builder AS cli-test
 
 # Test CLI commands
-RUN node dist/cli/agentdb-cli.js --version && \
-    node dist/cli/agentdb-cli.js --help && \
+RUN node dist/src/cli/agentdb-cli.js --version && \
+    node dist/src/cli/agentdb-cli.js --help && \
     echo "✅ CLI commands work"
 
 # Test database initialization
-RUN node dist/cli/agentdb-cli.js init /tmp/test.db && \
+RUN node dist/src/cli/agentdb-cli.js init /tmp/test.db && \
     sqlite3 /tmp/test.db "SELECT COUNT(*) FROM sqlite_master WHERE type='table';" && \
     test -f /tmp/test.db && \
     echo "✅ Database initialization works"
@@ -111,14 +111,11 @@ RUN node dist/cli/agentdb-cli.js init /tmp/test.db && \
 # =============================================================================
 FROM builder AS mcp-test
 
-# Test MCP server starts (timeout after 5 seconds)
-# Note: MCP server will use mock embeddings since @xenova/transformers is optional
-# Users can run `agentdb install-embeddings` to get real ML embeddings
-RUN timeout 5 node dist/cli/agentdb-cli.js mcp start 2>&1 | tee /tmp/mcp-output.log || EXIT_CODE=$?; \
-    if [ "$EXIT_CODE" = "124" ]; then \
-      echo "✅ MCP server started successfully (timeout expected)"; \
-    elif grep -q "29 tools available" /tmp/mcp-output.log; then \
-      echo "✅ MCP server started with mock embeddings (use 'agentdb install-embeddings' for real embeddings)"; \
+# Test the MCP server starts. It serves stdio, so it exits once stdin closes
+# (a build step has no stdin); check its startup banner instead of a timeout.
+RUN timeout 20 node dist/src/cli/agentdb-cli.js mcp start </dev/null >/tmp/mcp-output.log 2>&1; \
+    if grep -q "running on stdio" /tmp/mcp-output.log && grep -Eq "[0-9]+ tools available" /tmp/mcp-output.log; then \
+      echo "✅ MCP server started: $(grep -Eo '[0-9]+ tools available' /tmp/mcp-output.log)"; \
     else \
       echo "❌ MCP server failed to start"; \
       cat /tmp/mcp-output.log; \
@@ -137,11 +134,11 @@ RUN echo "Creating test legacy database..." && \
     INSERT INTO memory_entries (key, value, namespace, created_at) VALUES ('test2', 'value2', 'agent', 1234567891);"
 
 # Test migration dry-run
-RUN node dist/cli/agentdb-cli.js migrate /tmp/legacy.db --dry-run | grep -q "Migration Analysis" && \
+RUN node dist/src/cli/agentdb-cli.js migrate /tmp/legacy.db --dry-run | grep -q "Migration Analysis" && \
     echo "✅ Dry-run migration passed"
 
 # Test actual migration
-RUN node dist/cli/agentdb-cli.js migrate /tmp/legacy.db --target /tmp/migrated-v2.db && \
+RUN node dist/src/cli/agentdb-cli.js migrate /tmp/legacy.db --target /tmp/migrated-v2.db && \
     sqlite3 /tmp/migrated-v2.db "SELECT COUNT(*) FROM episodes" && \
     echo "✅ Migration completed successfully"
 
@@ -174,7 +171,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD node -e "process.exit(0)" || exit 1
 
 # Default command: CLI help
-CMD ["node", "dist/cli/agentdb-cli.js", "--help"]
+CMD ["node", "dist/src/cli/agentdb-cli.js", "--help"]
 
 # =============================================================================
 # Stage 8: Full Test Report (Final stage for CI)

@@ -8,7 +8,7 @@ const run = (cmd, args, cwd = process.cwd(), env = process.env) => execFileSync(
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const seal = JSON.parse(readFileSync(join(dir, 'candidate-seal.json'), 'utf8'));
 if (process.env.GITHUB_ACTIONS !== 'true' || process.env.GITHUB_WORKFLOW !== 'protected-release' || process.env.GITHUB_REF !== 'refs/heads/main' || process.env.GITHUB_SHA !== seal.sourceSha || process.env.EXPECTED_SHA !== seal.sourceSha || run('git', ['rev-parse', 'HEAD']) !== seal.sourceSha) throw new Error('Protected exact-main release context required');
-if (seal.schema !== 'agentdb.neural-release/1' || seal.name !== 'agentdb' || seal.version !== '3.10.0' || seal.filename !== 'agentdb-3.10.0.tgz' || seal.releaseTag !== 'v3.10.0' || seal.qualification?.packedConsumer !== 'passed') throw new Error('Invalid candidate seal');
+if (seal.schema !== 'agentdb.neural-release/1' || seal.name !== 'agentdb' || seal.version !== '3.10.1' || seal.filename !== 'agentdb-3.10.1.tgz' || seal.releaseTag !== 'v3.10.1' || seal.qualification?.packedConsumer !== 'passed') throw new Error('Invalid candidate seal');
 if (run('gh', ['api', `repos/${process.env.GITHUB_REPOSITORY}/commits/main`, '--jq', '.sha']) !== seal.sourceSha) throw new Error('Main moved after qualification');
 if (run('gh', ['issue', 'list', '--label', 'release-blocker', '--state', 'open', '--json', 'number', '--jq', 'length']) !== '0') throw new Error('Open release blockers');
 const tests = JSON.parse(readFileSync(join(dir, 'library-tests.json'), 'utf8'));
@@ -77,13 +77,13 @@ if (!await download()) {
 }
 const bytes = await waitPublic();
 writeFileSync(join(dir, 'npm-public.tgz'), bytes);
-await qualify('agentdb@3.10.0');
+await qualify('agentdb@3.10.1');
 const receipt = { schema: 'agentdb.neural-publication/1', sourceSha: seal.sourceSha, name: seal.name, version: seal.version, sha256: seal.sha256,
   neuralRerankEvaluationSha256: seal.qualification.neuralRerankEvaluationSha256, publicConsumer: 'passed', node: process.version };
 const receiptPath = join(dir, 'publication-receipt.json');
 writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx' });
 const notes = join(dir, 'release-notes.md');
-writeFileSync(notes, 'Adds a SQLite-backed learned memory reranker using ruv-fann 0.1.2, including direct hash-bound weight-patch candidates that use no gradients or hidden training. Both trained and patched candidates share held-out evaluation, explicit promotion and rollback gates. The attached synthetic benchmark is a deterministic qualification fixture, not a production effectiveness claim. See docs/neural/memory-reranking.md and CHANGELOG.md.\n');
+writeFileSync(notes, 'Patch release. `agentdb migrate <legacy.db> --target <new.db>` read its schema from a path that the published package does not contain and failed with "no such table: episodes"; it now uses the schemas inlined at build time. ruvector-attention-wasm is pinned to 2.1.0. See CHANGELOG.md.\n');
 function verifyTag(allowMissing = false) {
   const result = spawnSync('gh', ['api', `repos/${process.env.GITHUB_REPOSITORY}/git/ref/tags/${seal.releaseTag}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   if (result.status !== 0) {
@@ -96,7 +96,7 @@ function verifyTag(allowMissing = false) {
 }
 verifyTag(true);
 const existing = spawnSync('gh', ['release', 'view', seal.releaseTag, '--json', 'tagName'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-if (existing.status !== 0) run('gh', ['release', 'create', seal.releaseTag, tarball, join(dir, 'candidate-seal.json'), rerankPath, receiptPath, '--target', seal.sourceSha, '--title', 'AgentDB 3.10.0 — learned memory reranking', '--notes-file', notes]);
+if (existing.status !== 0) run('gh', ['release', 'create', seal.releaseTag, tarball, join(dir, 'candidate-seal.json'), rerankPath, receiptPath, '--target', seal.sourceSha, '--title', 'AgentDB 3.10.1 — migrate CLI schema fix', '--notes-file', notes]);
 verifyTag();
 const downloaded = mkdtempSync(join(tmpdir(), 'agentdb-release-'));
 try {

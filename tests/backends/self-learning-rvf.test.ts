@@ -211,6 +211,26 @@ describe('SelfLearningRvfBackend', () => {
 
 describe('ADR-006 Component Integration', () => {
   describe('SemanticQueryRouter (Phase 1)', () => {
+    // #45: @ruvector/router <= 0.1.28 opened ./vectors.db in the cwd with an
+    // exclusive lock, so a second router in the same process (or a parallel
+    // test worker) failed with "Database already open" and silently fell
+    // back to brute force. 0.1.34 (pinned since 3.8.1) keeps the index in
+    // memory.
+    it('keeps several native routers in one process without touching the cwd', async () => {
+      const { existsSync } = await import('fs');
+      const { SemanticQueryRouter } = await import('../../src/backends/rvf/SemanticQueryRouter.js');
+      const hadFile = existsSync('vectors.db');
+      const routers = await Promise.all([1, 2, 3].map(() => SemanticQueryRouter.create({ dimension: 4 })));
+      try {
+        if (await SemanticQueryRouter.isAvailable()) {
+          expect(routers.map((r) => r.isNative)).toEqual([true, true, true]);
+        }
+        if (!hadFile) expect(existsSync('vectors.db')).toBe(false);
+      } finally {
+        for (const r of routers) r.destroy();
+      }
+    });
+
     it('should create router and manage intents', async () => {
       const { SemanticQueryRouter } = await import('../../src/backends/rvf/SemanticQueryRouter.js');
       const router = await SemanticQueryRouter.create({ dimension: 4 });

@@ -7,7 +7,7 @@
 import { createDatabase } from '../../db-fallback.js';
 import { validateSqlIdentifier, ValidationError } from '../../security/input-validation.js';
 import * as fs from 'fs';
-import * as path from 'path';
+import { SCHEMA_SQL, FRONTIER_SCHEMA_SQL } from '../../schemas/inline.js';
 
 // Color codes for beautiful output
 const colors = {
@@ -173,27 +173,10 @@ export async function migrateV2ToV3(
   const rawDb = rvfBackend.getDatabase();
   const target = wrapExistingSqlJsDatabase(rawDb, targetRvfPath) as unknown as TargetDatabase;
 
-  // Load relational schemas into the unified database
-  // Try both source-tree (../../schemas/) and dist-tree (../../../schemas/) paths
-  const dirname = path.dirname(new URL(import.meta.url).pathname);
-  const schemaCandidates = [
-    path.join(dirname, '../../schemas/schema.sql'),
-    path.join(dirname, '../../../schemas/schema.sql'),
-  ];
-  const frontierCandidates = [
-    path.join(dirname, '../../schemas/frontier-schema.sql'),
-    path.join(dirname, '../../../schemas/frontier-schema.sql'),
-  ];
-
-  const schemaPath = schemaCandidates.find(p => fs.existsSync(p));
-  const frontierSchemaPath = frontierCandidates.find(p => fs.existsSync(p));
-
-  if (schemaPath) {
-    target.exec(fs.readFileSync(schemaPath, 'utf-8'));
-  }
-  if (frontierSchemaPath) {
-    target.exec(fs.readFileSync(frontierSchemaPath, 'utf-8'));
-  }
+  // Load relational schemas into the unified database (inlined at build
+  // time, so they do not depend on where the .sql files land in dist/)
+  target.exec(SCHEMA_SQL);
+  target.exec(FRONTIER_SCHEMA_SQL);
 
   // 3. Get table lists and compute intersection
   const sourceTables = source.prepare(
@@ -335,16 +318,11 @@ export async function migrateCommand(options: MigrationOptions): Promise<void> {
     console.log(`${colors.cyan}🔨 Initializing target database...${colors.reset}`);
     const target = await createDatabase(targetDb) as unknown as TargetDatabase;
 
-    // Load v2 schemas
-    const schemaPath = path.join(path.dirname(new URL(import.meta.url).pathname), '../../schemas/schema.sql');
-    const frontierSchemaPath = path.join(path.dirname(new URL(import.meta.url).pathname), '../../schemas/frontier-schema.sql');
-
-    if (fs.existsSync(schemaPath)) {
-      target.exec(fs.readFileSync(schemaPath, 'utf-8'));
-    }
-    if (fs.existsSync(frontierSchemaPath)) {
-      target.exec(fs.readFileSync(frontierSchemaPath, 'utf-8'));
-    }
+    // Load v2 schemas. These used to be read from ../../schemas/, which
+    // exists in src/ but not in the published dist/ (the .sql files are in
+    // dist/schemas/), so the migrate CLI failed with "no such table: episodes".
+    target.exec(SCHEMA_SQL);
+    target.exec(FRONTIER_SCHEMA_SQL);
 
     console.log(`${colors.green}✅ Target database initialized${colors.reset}\n`);
 
